@@ -1,0 +1,122 @@
+### Test ROLLBACK Phase ###
+
+## 1. Prepare a transaction first
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-ROLLBACK-001-DEBIT",
+    "account_id": "ACC003",
+    "operation": "DEBIT",
+    "amount": 200000.00
+}
+
+###
+
+## 2. Rollback DEBIT - Success
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-ROLLBACK-001-DEBIT"
+}
+
+###
+
+## 3. Rollback - Idempotent (already aborted)
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-ROLLBACK-001-DEBIT"
+}
+
+###
+
+## 4. Rollback - Transaction Not Found
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-NONEXISTENT"
+}
+
+###
+
+## 5. Check account is unlocked after rollback
+GET http://localhost:8001/api/accounts/ACC003
+
+###
+
+## 6. Check balance unchanged after rollback
+GET http://localhost:8001/api/accounts/ACC003/balance
+
+###
+
+## 7. Check transaction log
+GET http://localhost:8001/api/transactions?status_filter=ABORTED
+
+###
+
+## === Full Transfer then Rollback Scenario ===
+
+## 8. Prepare DEBIT for transfer
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-FAIL-001-DEBIT",
+    "account_id": "ACC004",
+    "operation": "DEBIT",
+    "amount": 500000.00
+}
+
+###
+
+## 9. Prepare CREDIT for transfer (simulate failure by using locked account)
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-FAIL-001-CREDIT",
+    "account_id": "ACC005",
+    "operation": "CREDIT",
+    "amount": 500000.00
+}
+
+###
+
+## 10. Rollback DEBIT (because overall transfer failed)
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-FAIL-001-DEBIT"
+}
+
+###
+
+## 11. Rollback CREDIT
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-FAIL-001-CREDIT"
+}
+
+###
+
+## === Recovery Tools ===
+
+## 12. Check pending transactions
+GET http://localhost:8001/api/recovery/status
+
+###
+
+## 13. Force rollback all prepared
+POST http://localhost:8001/api/recovery/force-rollback
+
+###
+
+## 14. Cleanup stale locks
+POST http://localhost:8001/api/recovery/cleanup-locks

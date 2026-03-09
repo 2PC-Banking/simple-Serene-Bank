@@ -1,0 +1,259 @@
+### =============================================
+### TEST CASES CHO 1 BANK (PARTICIPANT) - 2PC
+### =============================================
+### Trong mô hình 2PC, đây là Participant nhận lệnh từ Coordinator
+### Test các kịch bản: PREPARE → COMMIT/ROLLBACK
+### =============================================
+
+### --- SETUP: Xem danh sách tài khoản ---
+GET http://localhost:8001/api/accounts
+
+###
+
+### =============================================
+### KỊCH BẢN 1: DEBIT thành công (trừ tiền)
+### Flow: PREPARE → COMMIT
+### =============================================
+
+### 1.1 PREPARE DEBIT - Khóa tài khoản, kiểm tra số dư
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-001",
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 500000.00
+}
+
+### 1.2 Kiểm tra tài khoản đã bị LOCK
+GET http://localhost:8001/api/accounts/ACC001
+
+### 1.3 COMMIT - Thực hiện trừ tiền
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-001"
+}
+
+### 1.4 Kiểm tra số dư sau COMMIT
+GET http://localhost:8001/api/accounts/ACC001/balance
+
+###
+
+### =============================================
+### KỊCH BẢN 2: CREDIT thành công (cộng tiền)
+### Flow: PREPARE → COMMIT
+### =============================================
+
+### 2.1 PREPARE CREDIT
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-002",
+    "account_id": "ACC002",
+    "operation": "CREDIT",
+    "amount": 1000000.00
+}
+
+### 2.2 COMMIT CREDIT
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-002"
+}
+
+### 2.3 Kiểm tra số dư ACC002
+GET http://localhost:8001/api/accounts/ACC002/balance
+
+###
+
+### =============================================
+### KỊCH BẢN 3: ROLLBACK sau PREPARE
+### Coordinator quyết định hủy giao dịch
+### =============================================
+
+### 3.1 PREPARE một giao dịch
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-003",
+    "account_id": "ACC003",
+    "operation": "DEBIT",
+    "amount": 200000.00
+}
+
+### 3.2 Xem trạng thái account (đang locked)
+GET http://localhost:8001/api/accounts/ACC003
+
+### 3.3 ROLLBACK - Hủy giao dịch, unlock account
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-003"
+}
+
+### 3.4 Xem account đã được unlock, số dư không đổi
+GET http://localhost:8001/api/accounts/ACC003
+
+###
+
+### =============================================
+### KỊCH BẢN 4: PREPARE thất bại - Số dư không đủ
+### =============================================
+
+### 4.1 PREPARE DEBIT với số tiền lớn hơn số dư
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-004",
+    "account_id": "ACC002",
+    "operation": "DEBIT",
+    "amount": 999999999.00
+}
+### Expected: 400 Bad Request - Insufficient balance
+
+###
+
+### =============================================
+### KỊCH BẢN 5: PREPARE thất bại - Account đang bị lock
+### =============================================
+
+### 5.1 PREPARE giao dịch đầu tiên
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-005A",
+    "account_id": "ACC004",
+    "operation": "DEBIT",
+    "amount": 100000.00
+}
+
+### 5.2 PREPARE giao dịch thứ 2 trên cùng account (sẽ fail)
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-005B",
+    "account_id": "ACC004",
+    "operation": "CREDIT",
+    "amount": 50000.00
+}
+### Expected: 409 Conflict - Account locked
+
+### 5.3 ROLLBACK giao dịch đầu để cleanup
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-005A"
+}
+
+###
+
+### =============================================
+### KỊCH BẢN 6: PREPARE thất bại - Account không tồn tại
+### =============================================
+
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-006",
+    "account_id": "ACC_NOT_EXIST",
+    "operation": "DEBIT",
+    "amount": 100000.00
+}
+### Expected: 404 Not Found
+
+###
+
+### =============================================
+### KỊCH BẢN 7: Idempotency Test
+### Gửi cùng request nhiều lần phải cho cùng kết quả
+### =============================================
+
+### 7.1 PREPARE lần 1
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-007",
+    "account_id": "ACC005",
+    "operation": "DEBIT",
+    "amount": 300000.00
+}
+
+### 7.2 PREPARE lần 2 (cùng TX ID) - phải trả về kết quả tương tự
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-007",
+    "account_id": "ACC005",
+    "operation": "DEBIT",
+    "amount": 300000.00
+}
+
+### 7.3 COMMIT
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-007"
+}
+
+### 7.4 COMMIT lần 2 (idempotent)
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-SINGLE-007"
+}
+
+###
+
+### =============================================
+### KỊCH BẢN 8: Commit không có Prepare trước
+### =============================================
+
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-NOT-PREPARED"
+}
+### Expected: 404 Not Found
+
+###
+
+### =============================================
+### UTILITY: Recovery & Cleanup
+### =============================================
+
+### Xem các transaction đang pending
+GET http://localhost:8001/api/recovery/status
+
+### Force rollback tất cả PREPARED transactions
+POST http://localhost:8001/api/recovery/force-rollback
+
+### Cleanup stale locks
+POST http://localhost:8001/api/recovery/cleanup-locks
+
+### Xem tất cả transactions
+GET http://localhost:8001/api/transactions
+
+### Filter theo status
+GET http://localhost:8001/api/transactions?status_filter=PREPARED
+
+### Health check
+GET http://localhost:8001/health
+
+

@@ -3,12 +3,16 @@ Bank System - 2PC (Two Phase Commit) Participant
 Main application entry point
 """
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from app.core.config import settings
 from app.core.database import test_connection, init_db, seed_db, create_database_if_not_exists
+from app.api import balance, prepare, commit, rollback, single_bank
+from app.services.recovery_service import RecoveryService
 
 # Tạo FastAPI app
 app = FastAPI(
@@ -55,7 +59,43 @@ async def startup_event():
         print("✗ Database connection failed")
         return
 
+    # Recovery: kiểm tra transaction pending
+    print("Checking for pending transactions (recovery)...")
+    try:
+        recovery_result = RecoveryService.recover_pending_transactions()
+        if recovery_result["pending"] > 0:
+            print(f"⚠ Found {recovery_result['pending']} pending transaction(s)")
+        else:
+            print("✓ No pending transactions")
+    except Exception as e:
+        print(f"⚠ Recovery check failed: {e}")
+
     print(f"✓ {settings.APP_NAME} started on port {settings.APP_PORT}")
+
+    # Background task: auto-rollback expired transactions
+    asyncio.create_task(periodic_auto_rollback())
+
+
+async def periodic_auto_rollback():
+    """Background task: kiểm tra và rollback các TX PREPARED đã quá timeout"""
+    while True:
+        await asyncio.sleep(settings.LOCK_TIMEOUT)
+        try:
+            result = RecoveryService.auto_rollback_expired()
+            if result["rolled_back_count"] > 0:
+                print(f"⚠ Auto-rolled back {result['rolled_back_count']} expired transaction(s)")
+        except Exception as e:
+            print(f"⚠ Auto-rollback check failed: {e}")
+
+
+# =============================================
+# Register API Routers
+# =============================================
+app.include_router(balance.router)
+app.include_router(prepare.router)
+app.include_router(commit.router)
+app.include_router(rollback.router)
+app.include_router(single_bank.router)
 
 
 @app.get("/")

@@ -1,0 +1,65 @@
+### Test COMMIT Phase ###
+# Prerequisite: Run test_prepare.http tests 1 & 2 first
+
+## 1. Commit DEBIT - Success
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-DEBIT"
+}
+
+###
+
+## 2. Commit CREDIT - Success
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-CREDIT"
+}
+
+###
+
+## 3. Commit - Idempotent (already committed)
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-DEBIT"
+}
+
+###
+
+## 4. Commit - Transaction Not Found
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-NONEXISTENT"
+}
+
+###
+
+## 5. Check accounts after commit
+GET http://localhost:8001/api/accounts
+
+###
+
+## 6. Check transactions after commit
+GET http://localhost:8001/api/transactions?status_filter=COMMITTED
+
+###
+
+## 7. Check specific transaction
+GET http://localhost:8001/api/transactions/TX-TEST-001-DEBIT
+
+###
+
+## 8. Check balance of DEBIT account
+GET http://localhost:8001/api/accounts/ACC001/balance
+
+###
+
+## 9. Check balance of CREDIT account
+GET http://localhost:8001/api/accounts/ACC002/balance

@@ -1,0 +1,251 @@
+### =============================================
+### TEST SINGLE BANK API - Simplified Endpoints
+### =============================================
+### Các endpoint đơn giản hóa để test 1 bank
+### =============================================
+
+### --- Health Check ---
+GET http://localhost:8001/health
+
+###
+
+### --- Xem danh sách tài khoản ---
+GET http://localhost:8001/api/accounts
+
+###
+
+### =============================================
+### 1. SIMPLE TRANSFER (Auto 2PC)
+### Tự động chạy PREPARE → COMMIT
+### =============================================
+
+### 1.1 DEBIT (trừ tiền) - Simple
+POST http://localhost:8001/api/single/transfer
+Content-Type: application/json
+
+{
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 100000
+}
+
+###
+
+### 1.2 CREDIT (cộng tiền) - Simple
+POST http://localhost:8001/api/single/transfer
+Content-Type: application/json
+
+{
+    "account_id": "ACC002",
+    "operation": "CREDIT",
+    "amount": 500000
+}
+
+###
+
+### =============================================
+### 2. FULL 2PC FLOW (Chi tiết từng phase)
+### Trả về log chi tiết PREPARE → COMMIT
+### =============================================
+
+### 2.1 Full 2PC - DEBIT
+POST http://localhost:8001/api/single/full-2pc
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-FULL-2PC-001",
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 200000
+}
+
+###
+
+### 2.2 Full 2PC - CREDIT
+POST http://localhost:8001/api/single/full-2pc
+Content-Type: application/json
+
+{
+    "account_id": "ACC003",
+    "operation": "CREDIT",
+    "amount": 1000000
+}
+
+###
+
+### 2.3 Full 2PC - Insufficient balance (sẽ fail ở PREPARE)
+POST http://localhost:8001/api/single/full-2pc
+Content-Type: application/json
+
+{
+    "account_id": "ACC002",
+    "operation": "DEBIT",
+    "amount": 999999999
+}
+
+###
+
+### =============================================
+### 3. CHECK TRANSACTION STATUS
+### =============================================
+
+### Xem trạng thái transaction
+GET http://localhost:8001/api/single/status/TX-FULL-2PC-001
+
+###
+
+### =============================================
+### 4. RESET ACCOUNT (Testing Utility)
+### =============================================
+
+### Reset ACC001 về 10 triệu
+POST http://localhost:8001/api/single/reset-account/ACC001?new_balance=10000000
+
+### Reset ACC002 về 5 triệu
+POST http://localhost:8001/api/single/reset-account/ACC002?new_balance=5000000
+
+### Reset tất cả accounts về giá trị mặc định
+POST http://localhost:8001/api/single/reset-account/ACC001?new_balance=10000000
+
+###
+POST http://localhost:8001/api/single/reset-account/ACC002?new_balance=5000000
+
+###
+POST http://localhost:8001/api/single/reset-account/ACC003?new_balance=15000000
+
+###
+POST http://localhost:8001/api/single/reset-account/ACC004?new_balance=8000000
+
+###
+POST http://localhost:8001/api/single/reset-account/ACC005?new_balance=20000000
+
+###
+
+### =============================================
+### 5. SIMULATE CRASH SCENARIO
+### Test recovery flow
+### =============================================
+
+### 5.1 Trước tiên tạo 1 PREPARED transaction
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-CRASH-TEST",
+    "account_id": "ACC004",
+    "operation": "DEBIT",
+    "amount": 100000
+}
+
+### 5.2 Giả lập crash (không commit, để transaction stuck)
+POST http://localhost:8001/api/single/simulate-crash/TX-CRASH-TEST
+
+### 5.3 Kiểm tra recovery status - sẽ thấy TX pending
+GET http://localhost:8001/api/recovery/status
+
+### 5.4 Force rollback để cleanup
+POST http://localhost:8001/api/recovery/force-rollback
+
+### 5.5 Verify account đã được unlock
+GET http://localhost:8001/api/accounts/ACC004
+
+###
+
+### =============================================
+### 6. MANUAL 2PC FLOW (Step by step)
+### =============================================
+
+### 6.1 PREPARE
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-MANUAL-001",
+    "account_id": "ACC005",
+    "operation": "DEBIT",
+    "amount": 500000
+}
+
+### 6.2 Check account is locked
+GET http://localhost:8001/api/accounts/ACC005
+
+### 6.3 Check transaction status
+GET http://localhost:8001/api/single/status/TX-MANUAL-001
+
+### 6.4 Option A: COMMIT
+POST http://localhost:8001/api/commit
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-MANUAL-001"
+}
+
+### 6.4 Option B: ROLLBACK (thay vì commit)
+POST http://localhost:8001/api/rollback
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-MANUAL-001"
+}
+
+### 6.5 Verify final state
+GET http://localhost:8001/api/accounts/ACC005
+
+###
+
+### =============================================
+### 7. EDGE CASES
+### =============================================
+
+### 7.1 Account không tồn tại
+POST http://localhost:8001/api/single/transfer
+Content-Type: application/json
+
+{
+    "account_id": "ACC_NOT_EXIST",
+    "operation": "DEBIT",
+    "amount": 1000
+}
+
+### 7.2 Amount = 0 (invalid)
+POST http://localhost:8001/api/single/transfer
+Content-Type: application/json
+
+{
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 0
+}
+
+### 7.3 Negative amount (invalid)
+POST http://localhost:8001/api/single/transfer
+Content-Type: application/json
+
+{
+    "account_id": "ACC001",
+    "operation": "CREDIT",
+    "amount": -1000
+}
+
+###
+
+### =============================================
+### 8. VIEW ALL DATA
+### =============================================
+
+### All accounts
+GET http://localhost:8001/api/accounts
+
+### All transactions
+GET http://localhost:8001/api/transactions
+
+### Filter COMMITTED transactions
+GET http://localhost:8001/api/transactions?status_filter=COMMITTED
+
+### Filter ABORTED transactions
+GET http://localhost:8001/api/transactions?status_filter=ABORTED
+
+### Filter PREPARED transactions (pending)
+GET http://localhost:8001/api/transactions?status_filter=PREPARED
+
+

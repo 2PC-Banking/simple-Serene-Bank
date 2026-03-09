@@ -1,0 +1,88 @@
+### Test PREPARE Phase ###
+
+## 1. Prepare DEBIT - Success
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-DEBIT",
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 100000.00
+}
+
+###
+
+## 2. Prepare CREDIT - Success
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-CREDIT",
+    "account_id": "ACC002",
+    "operation": "CREDIT",
+    "amount": 100000.00
+}
+
+###
+
+## 3. Prepare DEBIT - Account Not Found
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-002-DEBIT",
+    "account_id": "ACC999",
+    "operation": "DEBIT",
+    "amount": 50000.00
+}
+
+###
+
+## 4. Prepare DEBIT - Insufficient Balance
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-003-DEBIT",
+    "account_id": "ACC002",
+    "operation": "DEBIT",
+    "amount": 999999999.00
+}
+
+###
+
+## 5. Prepare DEBIT - Account Already Locked
+# (Run after test 1 without committing/rolling back)
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-004-DEBIT",
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 50000.00
+}
+
+###
+
+## 6. Prepare DEBIT - Idempotent (same TX again)
+POST http://localhost:8001/api/prepare
+Content-Type: application/json
+
+{
+    "transaction_id": "TX-TEST-001-DEBIT",
+    "account_id": "ACC001",
+    "operation": "DEBIT",
+    "amount": 100000.00
+}
+
+###
+
+## 7. Check accounts after prepare
+GET http://localhost:8001/api/accounts
+
+###
+
+## 8. Check transactions after prepare
+GET http://localhost:8001/api/transactions?status_filter=PREPARED
