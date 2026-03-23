@@ -4,7 +4,9 @@
  * Bank 2: Simulated (frontend only)
  */
 
-const API_BASE = "http://localhost:8001/api";
+const API_BASE = window.location.protocol === "file:"
+    ? "http://localhost:8001/api"
+    : `${window.location.origin}/api`;
 
 // =============================================
 // 2PC State Management

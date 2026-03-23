@@ -3,6 +3,8 @@ from sqlalchemy.orm import sessionmaker, Session, declarative_base
 from contextlib import contextmanager
 from typing import Generator
 import os
+import re
+from pathlib import Path
 
 from .config import settings
 
@@ -66,22 +68,26 @@ def test_connection() -> bool:
         return False
 
 
+def _clean_sql_batch(batch: str) -> str:
+    """Loại bỏ comment line (`--`) để giữ lại câu SQL thực thi được."""
+    lines = []
+    for line in batch.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def create_database_if_not_exists() -> bool:
     """
     Tạo database BankDB nếu chưa tồn tại.
     Kết nối vào master database để tạo.
     """
 
-    # Connection string để kết nối vào master database
-    master_url = (
-        f"mssql+pyodbc://@{settings.DB_SERVER}/master?"
-        f"driver={settings.DB_DRIVER.replace(' ', '+')}&"
-        f"Trusted_Connection=yes"
-    )
-
     try:
         # Sử dụng isolation_level=AUTOCOMMIT để tránh lỗi transaction
-        master_engine = create_engine(master_url, isolation_level="AUTOCOMMIT")
+        master_engine = create_engine(settings.MASTER_DATABASE_URL, isolation_level="AUTOCOMMIT")
         with master_engine.connect() as conn:
             # Kiểm tra database có tồn tại không
             result = conn.execute(text(
@@ -109,45 +115,52 @@ def init_db() -> None:
         print("Cannot create database, skipping schema initialization")
         return
 
-    schema_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-        "database",
-        "schema.sql"
-    )
-    
-    if not os.path.exists(schema_path):
-        print(f"Schema file not found: {schema_path}")
+    # Nếu schema đã tồn tại thì không tạo lại để tránh mất dữ liệu.
+    try:
+        with engine.connect() as conn:
+            accounts_exists = conn.execute(text("SELECT OBJECT_ID('dbo.accounts', 'U')")).scalar() is not None
+            tx_log_exists = conn.execute(text("SELECT OBJECT_ID('dbo.transaction_log', 'U')")).scalar() is not None
+            if accounts_exists and tx_log_exists:
+                print("✓ Schema already exists, skipping initialization")
+                return
+    except Exception as e:
+        print(f"Error checking existing schema: {e}")
+
+    current_file = Path(__file__).resolve()
+    candidate_paths = [
+        current_file.parents[3] / "database" / "schema.sql",  # local: repo/backend/app/core -> repo/database
+        current_file.parents[2] / "database" / "schema.sql",  # docker: /app/app/core -> /app/database
+    ]
+    schema_path = next((p for p in candidate_paths if p.exists()), None)
+
+    if schema_path is None:
+        print(f"Schema file not found. Tried: {', '.join(str(p) for p in candidate_paths)}")
         return
-    
+
     with open(schema_path, "r", encoding="utf-8") as f:
         schema_sql = f.read()
-    
-    # Loại bỏ các lệnh CREATE DATABASE và USE vì đã xử lý riêng
-    # Chỉ giữ lại các lệnh tạo bảng và triggers
-    batches = schema_sql.split("\nGO")
-    
-    # Tạo engine mới kết nối trực tiếp vào BankDB
-    db_url = (
-        f"mssql+pyodbc://@{settings.DB_SERVER}/{settings.DB_NAME}?"
-        f"driver={settings.DB_DRIVER.replace(' ', '+')}&"
-        f"Trusted_Connection=yes"
-    )
-    db_engine = create_engine(db_url)
+
+    # Tách batch theo GO (cả file dùng LF/CRLF).
+    # Trước đó split theo "\nGO" khiến một số batch có comment đầu bị bỏ qua.
+    batches = re.split(r"^\s*GO\s*$", schema_sql, flags=re.MULTILINE)
+    db_engine = create_engine(settings.DATABASE_URL)
 
     with db_engine.connect() as conn:
         for batch in batches:
-            batch = batch.strip()
+            batch = _clean_sql_batch(batch)
             # Bỏ qua các lệnh CREATE DATABASE, USE
-            if batch and not batch.startswith("--"):
-                if "CREATE DATABASE" in batch.upper() or batch.upper().startswith("USE "):
-                    continue
-                try:
-                    conn.execute(text(batch))
-                    conn.commit()
-                except Exception as e:
-                    print(f"Error executing batch: {e}")
-                    conn.rollback()
-    
+            if not batch:
+                continue
+            upper_batch = batch.upper()
+            if "CREATE DATABASE" in upper_batch or upper_batch.startswith("USE "):
+                continue
+            try:
+                conn.execute(text(batch))
+                conn.commit()
+            except Exception as e:
+                print(f"Error executing batch: {e}")
+                conn.rollback()
+
     db_engine.dispose()
     print("Database schema initialized successfully!")
 

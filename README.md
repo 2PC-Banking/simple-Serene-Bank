@@ -30,6 +30,9 @@ Hệ thống ngân hàng demo triển khai giao thức **Two-Phase Commit** (2PC
 - **SQL Server** (LocalDB hoặc full instance)
 - **ODBC Driver 17 for SQL Server**
 
+Hoặc chạy full stack bằng Docker:
+- **Docker Desktop** (có Docker Compose)
+
 ## Cài đặt & Chạy
 
 ### 1. Cài đặt dependencies
@@ -57,6 +60,59 @@ API docs: `http://localhost:8001/docs`
 ### 4. Mở Frontend
 
 Mở file `frontend/index.html` trực tiếp trong trình duyệt.
+
+## Chạy Full Stack Với Docker
+
+### 1. Tạo file môi trường
+
+```bash
+cp .env.example .env
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### 2. Build và khởi động services
+
+```bash
+docker compose up -d --build
+```
+
+### 3. Truy cập ứng dụng
+
+- Frontend: `http://localhost:8080`
+- Backend API: `http://localhost:8001`
+- Swagger docs: `http://localhost:8001/docs`
+
+### 4. Xem logs
+
+```bash
+docker compose logs -f
+```
+
+### 5. Dừng hệ thống
+
+```bash
+docker compose down
+```
+
+### 6. Reset dữ liệu SQL Server (xóa volume)
+
+```bash
+docker compose down -v
+```
+
+## Cấu hình môi trường backend (`.env`)
+
+Các biến chính khi chạy Docker:
+- `DB_SERVER=db`
+- `DB_USER=sa`
+- `DB_PASSWORD=<giá trị MSSQL_SA_PASSWORD>`
+- `DB_TRUSTED_CONNECTION=false`
+- `DB_DRIVER=ODBC Driver 18 for SQL Server`
 
 ## Two-Phase Commit Flow
 
