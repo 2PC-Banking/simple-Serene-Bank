@@ -5,10 +5,24 @@ __pycache__/
 *.pyd
 .venv/
 venv/
+env/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # IDE files
 .idea/
 .vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # Environment files
 .env
@@ -16,3 +30,8 @@ backend/.env
 
 # Logs
 *.log
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

@@ -57,7 +57,7 @@ class TransactionService:
                 log_error(transaction_id, "PREPARE", f"Insufficient balance: {account.balance} < {amount}")
                 raise InsufficientBalanceError(account_id, float(account.balance), amount)
 
-        # 4. Kiểm tra xem đã có PREPARED log chưa (idempotent)
+        # 4. Check for idempotent repeat (already PREPARED by this TX)
         existing = db.query(TransactionLog).filter(
             TransactionLog.transaction_id == transaction_id,
             TransactionLog.account_id == account_id,
@@ -75,11 +75,13 @@ class TransactionService:
                 "amount": amount,
             }
 
-        # 5. Lock tài khoản
-        account.is_locked = True
-        account.locked_by_tx = transaction_id
+        # 5. Lock account via LockService (uses SELECT FOR UPDATE internally)
+        locked = LockService.lock_account(db=db, account_id=account_id, transaction_id=transaction_id)
+        if not locked:
+            log_error(transaction_id, "PREPARE", f"Failed to acquire lock on account '{account_id}'")
+            raise AccountLockedError(account_id, account.locked_by_tx or "unknown")
 
-        # 6. Ghi transaction log
+        # 6. Write transaction log
         tx_log = TransactionLog(
             transaction_id=transaction_id,
             account_id=account_id,
@@ -90,7 +92,7 @@ class TransactionService:
         db.add(tx_log)
         db.commit()
 
-        log_transaction(transaction_id, "PREPARE", f"Vote: YES — account '{account_id}' prepared")
+        log_transaction(transaction_id, "PREPARE", f"Vote: YES — account '{account_id}' locked and ready")
 
         return {
             "transaction_id": transaction_id,
@@ -100,6 +102,7 @@ class TransactionService:
             "operation": operation,
             "amount": amount,
         }
+
 
     # ========================
     # PHASE 2: COMMIT
@@ -205,7 +208,16 @@ class TransactionService:
         ).first()
 
         if tx_log is None:
-            # Kiểm tra đã aborted chưa (idempotent)
+            # Already COMMITTED → cannot rollback
+            committed = db.query(TransactionLog).filter(
+                TransactionLog.transaction_id == transaction_id,
+                TransactionLog.status == "COMMITTED"
+            ).first()
+            if committed:
+                log_error(transaction_id, "ROLLBACK", "Cannot rollback: transaction already COMMITTED")
+                raise TransactionInvalidStateError(transaction_id, "COMMITTED", "PREPARED")
+
+            # Already ABORTED → idempotent
             aborted = db.query(TransactionLog).filter(
                 TransactionLog.transaction_id == transaction_id,
                 TransactionLog.status == "ABORTED"
@@ -223,16 +235,14 @@ class TransactionService:
             log_error(transaction_id, "ROLLBACK", "No PREPARED/INIT transaction found")
             raise TransactionNotFoundError(transaction_id)
 
+
         account_id = tx_log.account_id
 
-        # 2. Cập nhật status → ABORTED
+        # 2. Update status → ABORTED
         tx_log.status = "ABORTED"
 
-        # 3. Unlock tài khoản
-        account = db.query(Account).filter(Account.account_id == account_id).first()
-        if account and account.is_locked and account.locked_by_tx == transaction_id:
-            account.is_locked = False
-            account.locked_by_tx = None
+        # 3. Unlock account via LockService
+        LockService.unlock_account(db=db, account_id=account_id, transaction_id=transaction_id)
 
         db.commit()
 
@@ -244,3 +254,4 @@ class TransactionService:
             "message": f"Transaction rolled back. Account '{account_id}' unlocked.",
             "account_id": account_id,
         }
+

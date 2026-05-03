@@ -1,6 +1,6 @@
-"""
-Commit API - Endpoint cho COMMIT phase của 2PC
-"""
+"""Commit API - Endpoint cho COMMIT phase của 2PC."""
+
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.commit_schema import CommitRequest, CommitResponse
 from app.services.transaction_service import TransactionService
-from app.utils.logger import log_transaction, log_error
+from app.utils.logger import log_error, log_transaction
 
 router = APIRouter(prefix="/api", tags=["2PC - Commit"])
 
@@ -28,6 +28,25 @@ def commit(request: CommitRequest, db: Session = Depends(get_db)):
     để giả lập coordinator không nhận được response (Phase 2 crash).
     """
     try:
+        if request.simulate_delay_ms > 0:
+            log_transaction(
+                request.transaction_id,
+                "COMMIT",
+                f"Simulating delay {request.simulate_delay_ms}ms before apply",
+            )
+            time.sleep(request.simulate_delay_ms / 1000)
+
+        if request.simulate_fail_before_apply:
+            log_error(
+                request.transaction_id,
+                "COMMIT",
+                "Simulated failure before apply commit",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Phase 2 exception simulated: failed before applying COMMIT",
+            )
+
         result = TransactionService.commit(
             db=db,
             transaction_id=request.transaction_id,

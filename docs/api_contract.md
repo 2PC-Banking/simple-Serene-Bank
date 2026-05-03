@@ -133,7 +133,9 @@ Lấy chi tiết transaction theo transaction_id.
     "transaction_id": "TX-2024-001-DEBIT",
     "account_id": "ACC001",
     "operation": "DEBIT",
-    "amount": 100000.00
+    "amount": 100000.00,
+    "simulate_delay_ms": 0,
+    "simulate_crash_before_vote": false
 }
 ```
 
@@ -143,6 +145,35 @@ Lấy chi tiết transaction theo transaction_id.
 | `account_id` | string | ✅ | ID tài khoản |
 | `operation` | string | ✅ | `DEBIT` hoặc `CREDIT` |
 | `amount` | number | ✅ | Số tiền (> 0) |
+| `simulate_delay_ms` | integer | ❌ | Delay mô phỏng trước khi participant xử lý PREPARE (ms) |
+| `simulate_crash_before_vote` | boolean | ❌ | Mô phỏng crash ở phase 1 trước khi trả vote |
+
+### `POST /api/prepare/coordinator-payload` — Prepare request envelope
+
+Chuẩn hóa payload cho Coordinator trước khi gọi PREPARE thật.
+
+**Request Body:** giống `POST /api/prepare`
+
+**Response 200:**
+```json
+{
+    "transaction_id": "TX-2024-001-DEBIT",
+    "participant": "bank-1-participant",
+    "prepare_endpoint": "/api/prepare",
+    "payload": {
+        "transaction_id": "TX-2024-001-DEBIT",
+        "account_id": "ACC001",
+        "operation": "DEBIT",
+        "amount": 100000.0,
+        "simulate_delay_ms": 0,
+        "simulate_crash_before_vote": false
+    },
+    "suggested_timeout_ms": 3000,
+    "notes": [
+        "Coordinator can send this payload to /api/prepare"
+    ]
+}
+```
 
 **Response 200 (Vote YES):**
 ```json
@@ -184,9 +215,19 @@ Lấy chi tiết transaction theo transaction_id.
 **Request Body:**
 ```json
 {
-    "transaction_id": "TX-2024-001-DEBIT"
+    "transaction_id": "TX-2024-001-DEBIT",
+    "simulate_delay_ms": 0,
+    "simulate_fail_before_apply": false,
+    "simulate_crash": false
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transaction_id` | string | ✅ | Global TX ID cần commit |
+| `simulate_delay_ms` | integer | ❌ | Delay mô phỏng trước khi apply commit |
+| `simulate_fail_before_apply` | boolean | ❌ | Mô phỏng exception trước khi ghi COMMIT |
+| `simulate_crash` | boolean | ❌ | Commit thật vào DB nhưng trả lỗi 500 (lost response) |
 
 **Response 200:**
 ```json
@@ -215,9 +256,17 @@ Lấy chi tiết transaction theo transaction_id.
 **Request Body:**
 ```json
 {
-    "transaction_id": "TX-2024-001-DEBIT"
+    "transaction_id": "TX-2024-001-DEBIT",
+    "simulate_delay_ms": 0,
+    "simulate_crash_before_apply": false
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `transaction_id` | string | ✅ | Global TX ID cần rollback |
+| `simulate_delay_ms` | integer | ❌ | Delay mô phỏng trước khi apply rollback |
+| `simulate_crash_before_apply` | boolean | ❌ | Mô phỏng crash trước khi rollback được apply |
 
 **Response 200:**
 ```json

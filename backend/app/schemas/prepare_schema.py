@@ -18,6 +18,8 @@ class PrepareRequest(BaseModel):
     account_id: str = Field(..., description="ID tài khoản cần thao tác", examples=["ACC001"])
     operation: OperationType = Field(..., description="Loại thao tác: DEBIT hoặc CREDIT")
     amount: float = Field(..., gt=0, description="Số tiền giao dịch (phải > 0)", examples=[100000.00])
+    simulate_delay_ms: int = Field(0, ge=0, le=15000, description="Delay trước khi xử lý PREPARE (ms)")
+    simulate_crash_before_vote: bool = Field(False, description="Giả lập crash trước khi participant trả vote")
 
 
 class PrepareResponse(BaseModel):
@@ -28,3 +30,13 @@ class PrepareResponse(BaseModel):
     account_id: str = Field(..., description="ID tài khoản")
     operation: str = Field(..., description="Loại thao tác")
     amount: float = Field(..., description="Số tiền giao dịch")
+
+
+class CoordinatorPreparePayloadResponse(BaseModel):
+    """Preview payload để frontend/coordinator gửi PREPARE"""
+    transaction_id: str = Field(..., description="Transaction ID")
+    participant: str = Field(..., description="Participant service name")
+    prepare_endpoint: str = Field(..., description="Endpoint nhận PREPARE")
+    payload: dict = Field(..., description="Payload chuẩn hóa để coordinator gửi")
+    suggested_timeout_ms: int = Field(..., description="Timeout khuyến nghị cho coordinator")
+    notes: list[str] = Field(..., description="Ghi chú về các case mô phỏng")

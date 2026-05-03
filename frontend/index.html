@@ -1,425 +1,295 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bank System - Two Phase Commit Simulator</title>
+    <meta name="description" content="2PC Bank Participant console – simulate and observe Two-Phase Commit protocol phases in a distributed banking system.">
+    <title>Bank Participant – 2PC Console</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <header>
-        <div class="header-content">
-            <h1>🏦 Bank System — 2PC Simulator</h1>
-            <p class="subtitle">Two-Phase Commit Protocol Demo với 1 Real Bank + 1 Simulated Bank</p>
-            <div class="server-status" id="serverStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Checking...</span>
-            </div>
-        </div>
-    </header>
 
-    <main>
-        <!-- ========== ACCOUNTS SECTION ========== -->
-        <section class="card" id="accountsSection">
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<header class="app-header">
+    <div class="header-inner">
+        <div class="header-brand">
+            <div class="brand-icon">🏦</div>
+            <span class="brand-name">Bank Participant</span>
+            <span class="brand-tag">2PC Protocol</span>
+        </div>
+        <div class="server-status" id="serverStatus">
+            <span class="status-dot"></span>
+            <span class="status-text">Checking…</span>
+        </div>
+    </div>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main class="app-main">
+
+    <!-- Row 1: Transaction Setup (left) + Participant State (right) -->
+    <div class="top-row">
+
+        <!-- Transaction Setup -->
+        <section class="card" id="section-setup">
             <div class="card-header">
-                <h2>📋 Danh sách tài khoản (Bank 1 - Real)</h2>
-                <button class="btn btn-secondary" onclick="loadAccounts()">🔄 Refresh</button>
+                <span class="card-title">Transaction Setup</span>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-ghost btn-sm" onclick="resetTransaction()">↺ Reset</button>
+                    <button class="btn btn-primary btn-sm" onclick="executeAutoFlow()">▶ Run Full 2PC</button>
+                </div>
             </div>
-            <div class="table-container">
-                <table id="accountsTable">
+            <div class="card-body">
+                <div class="form-grid">
+                    <div class="field" style="grid-column: 1/-1;">
+                        <label class="field-label" for="txId">Transaction ID</label>
+                        <div class="input-group">
+                            <input type="text" id="txId" class="tx-id-input" placeholder="TX-00000000-XXXX" autocomplete="off">
+                            <button class="btn btn-ghost btn-sm" onclick="generateTxId()">Auto</button>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="accountId">Account</label>
+                        <select id="accountId">
+                            <option value="">— Select account —</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="operation">Operation</label>
+                        <select id="operation">
+                            <option value="DEBIT">DEBIT  (withdraw)</option>
+                            <option value="CREDIT">CREDIT (deposit)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="amount">Amount (VND)</label>
+                        <input type="number" id="amount" min="1000" step="10000" value="500000">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Participant State -->
+        <section class="card" id="section-state">
+            <div class="card-header">
+                <span class="card-title">Participant State</span>
+            </div>
+            <div class="state-panel">
+                <div class="state-main state-idle" id="stateMain">
+                    <div class="state-label">Status</div>
+                    <div class="state-value" id="participantStatus">IDLE</div>
+                </div>
+                <div class="state-meta">
+                    <div class="meta-box">
+                        <div class="meta-label">Vote</div>
+                        <div class="meta-value" id="participantVote">—</div>
+                    </div>
+                    <div class="meta-box">
+                        <div class="meta-label">Decision</div>
+                        <div class="meta-value" id="coordinatorDecision">WAITING</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Row 2: Phase 1 + Phase 2 panels -->
+    <div class="phase-row">
+
+        <!-- Phase 1 -->
+        <section class="card" id="section-phase1">
+            <div class="card-header">
+                <span class="card-title">
+                    <span class="phase-badge phase-badge-1">Phase 1</span>
+                    Receive PREPARE → Send Vote
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="field" style="margin-bottom:12px;">
+                    <label class="field-label" for="phase1ReceiveDelay">Processing Delay (ms)</label>
+                    <input type="number" id="phase1ReceiveDelay" min="0" step="100" value="0" style="max-width:160px;">
+                </div>
+
+                <div class="sim-group-label">Fault Simulation</div>
+                <div class="sim-options">
+                    <label class="sim-label" for="phase1DropReceive">
+                        <input type="checkbox" id="phase1DropReceive">
+                        <span class="sim-text">
+                            Drop inbound PREPARE
+                            <span class="sim-sub">Participant never receives the PREPARE request</span>
+                        </span>
+                    </label>
+                    <label class="sim-label" for="phase1ForceNo">
+                        <input type="checkbox" id="phase1ForceNo">
+                        <span class="sim-text">
+                            Force Vote NO
+                            <span class="sim-sub">Participant votes NO (e.g., insufficient funds)</span>
+                        </span>
+                    </label>
+                    <label class="sim-label" for="phase1LoseVoteResponse">
+                        <input type="checkbox" id="phase1LoseVoteResponse">
+                        <span class="sim-text">
+                            Crash before sending Vote
+                            <span class="sim-sub">PREPARED written to DB but response lost</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="action-row">
+                <button class="btn btn-warning" onclick="runPrepare()" id="btnPrepare">
+                    ▶ Execute Phase 1
+                </button>
+            </div>
+        </section>
+
+        <!-- Phase 2 -->
+        <section class="card" id="section-phase2">
+            <div class="card-header">
+                <span class="card-title">
+                    <span class="phase-badge phase-badge-2">Phase 2</span>
+                    Receive Decision → Apply &amp; ACK
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="form-grid" style="margin-bottom:12px;">
+                    <div class="field">
+                        <label class="field-label" for="phase2Decision">Decision</label>
+                        <select id="phase2Decision">
+                            <option value="COMMIT">COMMIT</option>
+                            <option value="ROLLBACK">ROLLBACK</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="phase2ReceiveDelay">Apply Delay (ms)</label>
+                        <input type="number" id="phase2ReceiveDelay" min="0" step="100" value="0">
+                    </div>
+                </div>
+
+                <div class="sim-group-label">Fault Simulation</div>
+                <div class="sim-options">
+                    <label class="sim-label" for="phase2DropReceive">
+                        <input type="checkbox" id="phase2DropReceive">
+                        <span class="sim-text">
+                            Drop inbound Decision
+                            <span class="sim-sub">Participant never receives COMMIT/ROLLBACK</span>
+                        </span>
+                    </label>
+                    <label class="sim-label" for="phase2FailBeforeApply">
+                        <input type="checkbox" id="phase2FailBeforeApply">
+                        <span class="sim-text">
+                            Crash before apply (COMMIT only)
+                            <span class="sim-sub">Fails before writing balance change to DB</span>
+                        </span>
+                    </label>
+                    <label class="sim-label" for="phase2LoseAck">
+                        <input type="checkbox" id="phase2LoseAck">
+                        <span class="sim-text">
+                            Crash after apply (ACK lost)
+                            <span class="sim-sub">DB updated but coordinator sees timeout</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="action-row">
+                <button class="btn btn-success" onclick="runPhase2()" id="btnExecutePhase2" disabled>
+                    ▶ Execute Phase 2
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Row 3: Timeline (left) + Account Snapshot (right) -->
+    <div class="bottom-row">
+
+        <!-- 2PC Flow Timeline -->
+        <section class="card" id="section-timeline">
+            <div class="card-header">
+                <span class="card-title">2PC Flow Timeline</span>
+                <button class="btn btn-ghost btn-sm" onclick="clearFlow()">Clear</button>
+            </div>
+            <div class="timeline" id="flowContainer">
+                <div class="timeline-empty">Run a transaction to see the step-by-step timeline.</div>
+            </div>
+        </section>
+
+        <!-- Account Snapshot -->
+        <section class="card" id="section-accounts">
+            <div class="card-header">
+                <span class="card-title">Account Snapshot</span>
+                <button class="btn btn-ghost btn-sm" onclick="loadAccounts()">⟳ Refresh</button>
+            </div>
+            <div class="table-wrap">
+                <table>
                     <thead>
                         <tr>
                             <th>Account ID</th>
-                            <th>Tên</th>
-                            <th>Số dư</th>
-                            <th>Trạng thái</th>
-                            <th>Locked By</th>
+                            <th>Name</th>
+                            <th>Balance</th>
+                            <th>Lock</th>
                         </tr>
                     </thead>
                     <tbody id="accountsBody">
-                        <tr><td colspan="5" class="loading">Đang tải...</td></tr>
+                        <tr><td colspan="4" class="table-empty">Loading…</td></tr>
                     </tbody>
                 </table>
             </div>
         </section>
+    </div>
 
-        <!-- ========== TRANSFER SETUP ========== -->
-        <section class="card">
-            <div class="card-header">
-                <h2>💸 Thiết lập giao dịch 2PC</h2>
+    <!-- Row 4: Transaction Log (full width) -->
+    <section class="card" id="section-txlog">
+        <div class="card-header">
+            <span class="card-title">Transaction Log</span>
+            <div class="filter-row">
+                <select id="statusFilter" onchange="loadTransactions()">
+                    <option value="">All statuses</option>
+                    <option value="INIT">INIT</option>
+                    <option value="PREPARED">PREPARED</option>
+                    <option value="COMMITTED">COMMITTED</option>
+                    <option value="ABORTED">ABORTED</option>
+                </select>
+                <button class="btn btn-ghost btn-sm" onclick="loadTransactions()">⟳ Refresh</button>
             </div>
-            <div class="transfer-form">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="txId">Transaction ID</label>
-                        <div class="input-with-btn">
-                            <input type="text" id="txId" placeholder="TX-2024-001">
-                            <button class="btn btn-small" onclick="generateTxId()">🎲 Auto</button>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="amount">Số tiền chuyển</label>
-                        <input type="number" id="amount" placeholder="100000" min="1" step="1000" value="50000">
-                    </div>
-                </div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Transaction ID</th>
+                        <th>Account</th>
+                        <th>Op</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody id="transactionsBody">
+                    <tr><td colspan="7" class="table-empty">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
 
-                <!-- Bank Selection Row -->
-                <div class="form-row banks-selection">
-                    <div class="form-group">
-                        <label for="bank1Account">🏦 Bank 1 (Real) - Account</label>
-                        <select id="bank1Account">
-                            <option value="">-- Chọn tài khoản --</option>
-                        </select>
-                    </div>
-                    <div class="form-group transfer-direction">
-                        <label>Hướng chuyển</label>
-                        <div class="transfer-arrow">➡️</div>
-                    </div>
-                    <div class="form-group">
-                        <label for="bank2Account">🏛️ Bank 2 (Simulated) - Account</label>
-                        <input type="text" id="bank2Account" placeholder="SIM-ACC-001" value="SIM-ACC-001">
-                    </div>
-                </div>
+    <!-- Row 5: Recovery Actions -->
+    <section class="card" id="section-recovery">
+        <div class="card-header">
+            <span class="card-title">Recovery Actions</span>
+        </div>
+        <div class="action-row">
+            <button class="btn btn-ghost" onclick="checkRecovery()">📋 List Pending</button>
+            <button class="btn btn-warning" onclick="autoRollbackExpired()">⏱ Rollback Expired</button>
+            <button class="btn btn-danger" onclick="forceRollbackAll()">⚠ Force Rollback All</button>
+            <button class="btn btn-ghost" onclick="cleanupLocks()">🔓 Cleanup Locks</button>
+        </div>
+        <div id="recoveryResult" class="recovery-result" style="display:none;"></div>
+    </section>
 
-                <div class="form-actions">
-                    <button class="btn btn-primary btn-lg" onclick="executeFullTransfer()">
-                        🚀 Thực hiện Full 2PC (Auto)
-                    </button>
-                    <button class="btn btn-secondary" onclick="resetTransaction()">
-                        🔄 Reset All
-                    </button>
-                </div>
-            </div>
-        </section>
+</main>
 
-        <!-- ========== 2PC SIMULATOR - TWO BANKS ========== -->
-        <section class="card">
-            <div class="card-header">
-                <h2>⚙️ 2PC Step-by-Step Simulator</h2>
-            </div>
+<!-- Toast container -->
+<div id="toastContainer" class="toast-container"></div>
 
-            <div class="simulator-container">
-                <!-- Two Banks Side by Side -->
-                <div class="banks-grid">
-
-                    <!-- BANK 1 - REAL (with backend) -->
-                    <div class="bank-panel real-bank" id="bank1Panel">
-                        <div class="bank-header">
-                            <div class="bank-icon">🏦</div>
-                            <div class="bank-info">
-                                <h3>Bank 1 - Real</h3>
-                                <span class="bank-type-badge real">Backend Connected</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-account-info">
-                            <div class="info-row">
-                                <span class="info-label">Account:</span>
-                                <span class="info-value" id="bank1AccountDisplay">Chưa chọn</span>
-                            </div>
-                            <div class="info-row">
-                                <span class="info-label">Operation:</span>
-                                <span class="info-value">DEBIT (trừ tiền)</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-status-panel">
-                            <div class="status-item">
-                                <span class="status-label">Phase:</span>
-                                <span class="status-badge" id="bank1StatusBadge">IDLE</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">Vote:</span>
-                                <span class="vote-badge" id="bank1VoteBadge">—</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-actions">
-                            <!-- Phase 1: PREPARE -->
-                            <div class="phase-section">
-                                <div class="phase-header">
-                                    <span class="phase-number">1</span>
-                                    <span class="phase-title">PREPARE Phase</span>
-                                </div>
-                                <div class="phase-content">
-                                    <div class="vote-control">
-                                        <label>Vote Response:</label>
-                                        <select id="bank1VoteSelect" class="vote-select">
-                                            <option value="YES">✅ YES (accept)</option>
-                                            <option value="NO">❌ NO (reject)</option>
-                                        </select>
-                                    </div>
-                                    <button class="btn btn-warning btn-block" onclick="prepareBank1()" id="btnPrepareBank1">
-                                        📋 Send PREPARE
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Phase 2: COMMIT/ROLLBACK -->
-                            <div class="phase-section">
-                                <div class="phase-header">
-                                    <span class="phase-number">2</span>
-                                    <span class="phase-title">DECISION Phase</span>
-                                </div>
-                                <div class="phase-content">
-                                    <div class="btn-group">
-                                        <button class="btn btn-success" onclick="commitBank1()" id="btnCommitBank1" disabled>
-                                            ✅ COMMIT
-                                        </button>
-                                        <button class="btn btn-danger" onclick="rollbackBank1()" id="btnRollbackBank1" disabled>
-                                            ↩️ ROLLBACK
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bank-log" id="bank1Log">
-                            <div class="log-placeholder">Waiting for actions...</div>
-                        </div>
-                    </div>
-
-                    <!-- COORDINATOR (in the middle) -->
-                    <div class="coordinator-panel">
-                        <div class="coordinator-header">
-                            <div class="coordinator-icon">🎯</div>
-                            <h3>Transaction Coordinator</h3>
-                        </div>
-
-                        <div class="coordinator-flow">
-                            <!-- Votes Display -->
-                            <div class="votes-display">
-                                <div class="vote-box" id="voteBoxBank1">
-                                    <div class="vote-label">Bank 1</div>
-                                    <div class="vote-icon" id="voteIconBank1">⏳</div>
-                                </div>
-
-                                <div class="decision-arrow">➡️</div>
-
-                                <div class="decision-box" id="decisionBox">
-                                    <div class="decision-icon" id="decisionIcon">🤔</div>
-                                    <div class="decision-text" id="decisionText">Waiting...</div>
-                                </div>
-
-                                <div class="decision-arrow">⬅️</div>
-
-                                <div class="vote-box" id="voteBoxBank2">
-                                    <div class="vote-label">Bank 2</div>
-                                    <div class="vote-icon" id="voteIconBank2">⏳</div>
-                                </div>
-                            </div>
-
-                            <!-- Decision Rules -->
-                            <div class="decision-rules">
-                                <div class="rule">✅ ALL YES → <strong>COMMIT</strong></div>
-                                <div class="rule">❌ Any NO → <strong>ABORT</strong></div>
-                            </div>
-                        </div>
-
-                        <div class="coordinator-actions">
-                            <button class="btn btn-primary" onclick="autoDecideAndExecute()" id="btnAutoDecide">
-                                🤖 Auto Decision
-                            </button>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="autoRecoveryEnabled" checked>
-                                <span>Auto Recovery</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- BANK 2 - SIMULATED -->
-                    <div class="bank-panel simulated-bank" id="bank2Panel">
-                        <div class="bank-header">
-                            <div class="bank-icon">🏛️</div>
-                            <div class="bank-info">
-                                <h3>Bank 2 - Simulated</h3>
-                                <span class="bank-type-badge simulated">Frontend Only</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-account-info">
-                            <div class="info-row">
-                                <span class="info-label">Account:</span>
-                                <span class="info-value" id="bank2AccountDisplay">SIM-ACC-001</span>
-                            </div>
-                            <div class="info-row">
-                                <span class="info-label">Operation:</span>
-                                <span class="info-value">CREDIT (cộng tiền)</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-status-panel">
-                            <div class="status-item">
-                                <span class="status-label">Phase:</span>
-                                <span class="status-badge" id="bank2StatusBadge">IDLE</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">Vote:</span>
-                                <span class="vote-badge" id="bank2VoteBadge">—</span>
-                            </div>
-                        </div>
-
-                        <div class="bank-actions">
-                            <!-- Phase 1: PREPARE -->
-                            <div class="phase-section">
-                                <div class="phase-header">
-                                    <span class="phase-number">1</span>
-                                    <span class="phase-title">PREPARE Phase</span>
-                                </div>
-                                <div class="phase-content">
-                                    <div class="vote-control">
-                                        <label>Vote Response:</label>
-                                        <select id="bank2VoteSelect" class="vote-select">
-                                            <option value="YES">✅ YES (accept)</option>
-                                            <option value="NO">❌ NO (reject)</option>
-                                        </select>
-                                    </div>
-                                    <button class="btn btn-warning btn-block" onclick="prepareBank2()" id="btnPrepareBank2">
-                                        📋 Send PREPARE
-                                    </button>
-                                    <!-- Simulate options for Bank 2 -->
-                                    <div class="simulate-options">
-                                        <label class="checkbox-label small">
-                                            <input type="checkbox" id="bank2SimulateDelay">
-                                            <span>⏱️ Delay (2s)</span>
-                                        </label>
-                                        <label class="checkbox-label small">
-                                            <input type="checkbox" id="bank2SimulateCrash">
-                                            <span>💥 Crash after prepare</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Phase 2: COMMIT/ROLLBACK -->
-                            <div class="phase-section">
-                                <div class="phase-header">
-                                    <span class="phase-number">2</span>
-                                    <span class="phase-title">DECISION Phase</span>
-                                </div>
-                                <div class="phase-content">
-                                    <div class="btn-group">
-                                        <button class="btn btn-success" onclick="commitBank2()" id="btnCommitBank2" disabled>
-                                            ✅ COMMIT
-                                        </button>
-                                        <button class="btn btn-danger" onclick="rollbackBank2()" id="btnRollbackBank2" disabled>
-                                            ↩️ ROLLBACK
-                                        </button>
-                                    </div>
-                                    <!-- Simulate options for Phase 2 -->
-                                    <div class="simulate-options">
-                                        <label class="checkbox-label small">
-                                            <input type="checkbox" id="bank2SimulateCommitFail">
-                                            <span>💥 Fail on commit</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bank-log" id="bank2Log">
-                            <div class="log-placeholder">Waiting for actions...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Quick Test Scenarios -->
-                <div class="scenarios-section">
-                    <h4>🧪 Quick Test Scenarios</h4>
-                    <div class="scenario-buttons">
-                        <button class="btn btn-outline" onclick="runScenario('happy-path')" title="Cả 2 bank vote YES → COMMIT thành công">
-                            ✅ Happy Path (All YES)
-                        </button>
-                        <button class="btn btn-outline" onclick="runScenario('bank1-reject')" title="Bank 1 vote NO → ABORT">
-                            🔴 Bank 1 Rejects
-                        </button>
-                        <button class="btn btn-outline" onclick="runScenario('bank2-reject')" title="Bank 2 vote NO → ABORT, rollback Bank 1">
-                            🟠 Bank 2 Rejects
-                        </button>
-                        <button class="btn btn-outline" onclick="runScenario('bank2-crash')" title="Bank 2 crash sau prepare → Coordinator timeout">
-                            💥 Bank 2 Crash
-                        </button>
-                        <button class="btn btn-outline" onclick="runScenario('partial-commit')" title="Commit Bank 1, Bank 2 fail → Inconsistent state">
-                            ⚠️ Partial Commit
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ========== 2PC FLOW VISUALIZATION ========== -->
-        <section class="card">
-            <div class="card-header">
-                <h2>📊 2PC Protocol Flow</h2>
-                <button class="btn btn-secondary btn-small" onclick="clearFlow()">🗑️ Clear</button>
-            </div>
-            <div class="flow-container" id="flowContainer">
-                <div class="flow-placeholder">Thực hiện giao dịch để xem flow 2PC</div>
-            </div>
-        </section>
-
-        <!-- ========== TRANSACTION LOG ========== -->
-        <section class="card">
-            <div class="card-header">
-                <h2>📝 Transaction Log (Bank 1 - Real)</h2>
-                <div class="filter-group">
-                    <select id="statusFilter" onchange="loadTransactions()">
-                        <option value="">Tất cả</option>
-                        <option value="INIT">INIT</option>
-                        <option value="PREPARED">PREPARED</option>
-                        <option value="COMMITTED">COMMITTED</option>
-                        <option value="ABORTED">ABORTED</option>
-                    </select>
-                    <button class="btn btn-secondary" onclick="loadTransactions()">🔄 Refresh</button>
-                </div>
-            </div>
-            <div class="table-container">
-                <table id="transactionsTable">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Transaction ID</th>
-                            <th>Account</th>
-                            <th>Operation</th>
-                            <th>Amount</th>
-                            <th>Status</th>
-                            <th>Thời gian</th>
-                        </tr>
-                    </thead>
-                    <tbody id="transactionsBody">
-                        <tr><td colspan="7" class="loading">Đang tải...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <!-- ========== RECOVERY SECTION ========== -->
-        <section class="card">
-            <div class="card-header">
-                <h2>🔧 Recovery & Cleanup (Bank 1)</h2>
-            </div>
-            <div class="recovery-actions">
-                <button class="btn btn-warning" onclick="checkRecovery()">
-                    🔍 Check Pending TX
-                </button>
-                <button class="btn btn-danger" onclick="forceRollbackAll()">
-                    ⚠️ Force Rollback All
-                </button>
-                <button class="btn btn-secondary" onclick="cleanupLocks()">
-                    🧹 Cleanup Locks
-                </button>
-            </div>
-            <div id="recoveryResult" class="recovery-result" style="display: none;"></div>
-        </section>
-    </main>
-
-    <!-- Toast notification -->
-    <div id="toastContainer" class="toast-container"></div>
-
-    <footer>
-        <p>Bank System — Two Phase Commit Protocol Simulator | &copy; 2024</p>
-    </footer>
-
-    <script src="js/main.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>

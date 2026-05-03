@@ -17,21 +17,19 @@ class RecoveryService:
     """Service phục hồi transaction sau crash"""
 
     @staticmethod
-    def recover_pending_transactions() -> dict:
+    def list_pending_transactions() -> dict:
         """
-        Tìm và xử lý các transaction đang ở trạng thái PREPARED.
-        
-        Chiến lược recovery:
-        - Các transaction PREPARED sẽ được giữ nguyên và chờ
-          Coordinator gửi lệnh COMMIT hoặc ROLLBACK.
-        - Nếu timeout (vượt quá LOCK_TIMEOUT), tự động ABORT.
-        
-        Returns dict với thông tin recovery.
+        List all transactions currently in PREPARED state awaiting coordinator decision.
+
+        These transactions have completed Phase 1 (PREPARE) but have not yet
+        received COMMIT or ROLLBACK from the coordinator. They hold account locks
+        and must be resolved either by the coordinator or via force-rollback.
+
+        Returns dict with pending count and details.
         """
-        logger.info("=== RECOVERY: Checking for pending transactions ===")
+        logger.info("=== RECOVERY: Listing pending (PREPARED) transactions ===")
 
         with get_db_context() as db:
-            # Tìm tất cả transaction đang PREPARED
             prepared_txs = db.query(TransactionLog).filter(
                 TransactionLog.status == "PREPARED"
             ).all()
@@ -39,7 +37,6 @@ class RecoveryService:
             if not prepared_txs:
                 logger.info("RECOVERY: No pending transactions found")
                 return {
-                    "recovered": 0,
                     "pending": 0,
                     "details": []
                 }
@@ -60,11 +57,10 @@ class RecoveryService:
                 log_transaction(
                     tx.transaction_id,
                     "RECOVERY",
-                    f"Pending TX found: account={tx.account_id}, op={tx.operation}, amount={tx.amount}"
+                    f"Pending TX: account={tx.account_id}, op={tx.operation}, amount={tx.amount}"
                 )
 
             return {
-                "recovered": 0,
                 "pending": len(prepared_txs),
                 "details": details
             }

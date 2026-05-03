@@ -1,14 +1,18 @@
-"""
-Prepare API - Endpoint cho PREPARE phase của 2PC
-"""
+"""Prepare API - Endpoint cho PREPARE phase của 2PC."""
+
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.prepare_schema import PrepareRequest, PrepareResponse
+from app.schemas.prepare_schema import (
+    CoordinatorPreparePayloadResponse,
+    PrepareRequest,
+    PrepareResponse,
+)
 from app.services.transaction_service import TransactionService
-from app.utils.logger import log_transaction, log_error
+from app.utils.logger import log_error, log_transaction
 
 router = APIRouter(prefix="/api", tags=["2PC - Prepare"])
 
@@ -27,6 +31,23 @@ def prepare(request: PrepareRequest, db: Session = Depends(get_db)):
     Nếu FAIL → trả lỗi tương ứng
     """
     try:
+        if request.simulate_delay_ms > 0:
+            log_transaction(
+                request.transaction_id,
+                "PREPARE",
+                f"Simulating delay {request.simulate_delay_ms}ms before vote",
+            )
+            time.sleep(request.simulate_delay_ms / 1000)
+
+        if request.simulate_crash_before_vote:
+            log_error(request.transaction_id, "PREPARE", "Simulated crash before vote response")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Crash simulated in Phase 1: participant stopped before returning vote to coordinator"
+                ),
+            )
+
         result = TransactionService.prepare(
             db=db,
             transaction_id=request.transaction_id,
@@ -41,3 +62,31 @@ def prepare(request: PrepareRequest, db: Session = Depends(get_db)):
         log_error(request.transaction_id, "PREPARE", str(e))
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Internal error during PREPARE: {str(e)}")
+
+
+@router.post("/prepare/coordinator-payload", response_model=CoordinatorPreparePayloadResponse)
+def prepare_coordinator_payload(request: PrepareRequest):
+    """Chuẩn hóa payload để frontend/coordinator gửi sang participant ở Phase 1."""
+    notes = [
+        "Coordinator can send this payload to /api/prepare",
+        "If simulate_crash_before_vote=true, coordinator should treat it as timeout/unknown vote",
+    ]
+    if request.simulate_delay_ms > 0:
+        notes.append(f"Simulated delay configured: {request.simulate_delay_ms}ms")
+
+    timeout = max(3000, request.simulate_delay_ms + 2000)
+    return CoordinatorPreparePayloadResponse(
+        transaction_id=request.transaction_id,
+        participant="bank-1-participant",
+        prepare_endpoint="/api/prepare",
+        payload={
+            "transaction_id": request.transaction_id,
+            "account_id": request.account_id,
+            "operation": request.operation.value,
+            "amount": request.amount,
+            "simulate_delay_ms": request.simulate_delay_ms,
+            "simulate_crash_before_vote": request.simulate_crash_before_vote,
+        },
+        suggested_timeout_ms=timeout,
+        notes=notes,
+    )

@@ -38,6 +38,10 @@ services:
       APP_PORT: "8001"
       DEBUG: "false"
       LOCK_TIMEOUT: "30"
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      CORS_ALLOW_METHODS: ${CORS_ALLOW_METHODS:-*}
+      CORS_ALLOW_HEADERS: ${CORS_ALLOW_HEADERS:-*}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
     depends_on:
       db:
         condition: service_healthy

@@ -1,6 +1,6 @@
-"""
-Rollback API - Endpoint cho ROLLBACK phase của 2PC
-"""
+"""Rollback API - ROLLBACK phase (Phase 2 alternative) of Two-Phase Commit."""
+
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.rollback_schema import RollbackRequest, RollbackResponse
 from app.services.transaction_service import TransactionService
-from app.services.recovery_service import RecoveryService
-from app.utils.logger import log_transaction, log_error
+from app.utils.logger import log_error
 
 router = APIRouter(prefix="/api", tags=["2PC - Rollback"])
 
@@ -17,19 +16,43 @@ router = APIRouter(prefix="/api", tags=["2PC - Rollback"])
 @router.post("/rollback", response_model=RollbackResponse)
 def rollback(request: RollbackRequest, db: Session = Depends(get_db)):
     """
-    ROLLBACK Phase (Phase 2 - Alternative) của Two-Phase Commit.
-    
-    Coordinator nhận ít nhất 1 vote NO → gửi ROLLBACK.
-    Participant thực hiện:
-    - Cập nhật status → ABORTED
-    - Unlock tài khoản
-    - Không thay đổi balance
+    ROLLBACK Phase (Phase 2 – alternative) of Two-Phase Commit.
+
+    Triggered when coordinator receives at least one NO vote, or when
+    a participant fails to respond during Phase 1.
+
+    Participant actions:
+    - Update transaction status → ABORTED
+    - Unlock the account (no balance change)
+    - Return ACK to coordinator
+
+    Idempotent: calling again on an already-ABORTED transaction returns ABORTED.
+
+    Fault simulation flags:
+    - simulate_crash_before_apply: participant crashes before writing ABORTED
+    - simulate_crash_after_apply:  ABORTED written, but ACK is lost (coordinator sees timeout)
     """
     try:
+        if request.simulate_delay_ms > 0:
+            time.sleep(request.simulate_delay_ms / 1000)
+
+        if request.simulate_crash_before_apply:
+            raise HTTPException(
+                status_code=500,
+                detail="Fault simulation: participant crashed before applying ROLLBACK",
+            )
+
         result = TransactionService.rollback(
             db=db,
             transaction_id=request.transaction_id,
         )
+
+        if request.simulate_crash_after_apply:
+            raise HTTPException(
+                status_code=500,
+                detail="Fault simulation: ROLLBACK applied in DB but ACK lost (coordinator timeout)",
+            )
+
         return RollbackResponse(**result)
     except HTTPException:
         raise
@@ -37,43 +60,3 @@ def rollback(request: RollbackRequest, db: Session = Depends(get_db)):
         log_error(request.transaction_id, "ROLLBACK", str(e))
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Internal error during ROLLBACK: {str(e)}")
-
-
-@router.get("/recovery/status")
-def recovery_status():
-    """Kiểm tra trạng thái các transaction đang pending"""
-    result = RecoveryService.recover_pending_transactions()
-    return {
-        "status": "success",
-        **result
-    }
-
-
-@router.post("/recovery/force-rollback")
-def force_rollback_all():
-    """Force rollback tất cả transaction PREPARED (cleanup)"""
-    result = RecoveryService.force_rollback_all_prepared()
-    return {
-        "status": "success",
-        **result
-    }
-
-
-@router.post("/recovery/auto-rollback-expired")
-def auto_rollback_expired():
-    """Tự động rollback các transaction PREPARED đã quá timeout"""
-    result = RecoveryService.auto_rollback_expired()
-    return {
-        "status": "success",
-        **result
-    }
-
-
-@router.post("/recovery/cleanup-locks")
-def cleanup_locks():
-    """Dọn dẹp các lock cũ không còn transaction tương ứng"""
-    result = RecoveryService.cleanup_stale_locks()
-    return {
-        "status": "success",
-        **result
-    }

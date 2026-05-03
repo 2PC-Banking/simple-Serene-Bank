@@ -11,7 +11,7 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.database import test_connection, init_db, seed_db, create_database_if_not_exists
-from app.api import balance, prepare, commit, rollback, single_bank
+from app.api import balance, prepare, commit, rollback, recovery
 from app.services.recovery_service import RecoveryService
 
 # Tạo FastAPI app
@@ -24,12 +24,25 @@ app = FastAPI(
 )
 
 # CORS middleware
+cors_origins = settings.cors_allow_origins_list
+cors_methods = settings.cors_allow_methods_list
+cors_headers = settings.cors_allow_headers_list
+cors_credentials = settings.CORS_ALLOW_CREDENTIALS
+
+# Browser CORS spec does not allow credentials with wildcard origin.
+if "*" in cors_origins and cors_credentials:
+    print(
+        "⚠ CORS_ALLOW_CREDENTIALS=true is not compatible with CORS_ALLOW_ORIGINS='*'. "
+        "Forcing credentials=false."
+    )
+    cors_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=cors_credentials,
+    allow_methods=cors_methods,
+    allow_headers=cors_headers,
 )
 
 
@@ -59,12 +72,12 @@ async def startup_event():
         print("✗ Database connection failed")
         return
 
-    # Recovery: kiểm tra transaction pending
+    # Recovery: list any pending transactions left from previous run
     print("Checking for pending transactions (recovery)...")
     try:
-        recovery_result = RecoveryService.recover_pending_transactions()
+        recovery_result = RecoveryService.list_pending_transactions()
         if recovery_result["pending"] > 0:
-            print(f"⚠ Found {recovery_result['pending']} pending transaction(s)")
+            print(f"⚠ Found {recovery_result['pending']} pending transaction(s) – awaiting coordinator decision")
         else:
             print("✓ No pending transactions")
     except Exception as e:
@@ -95,7 +108,7 @@ app.include_router(balance.router)
 app.include_router(prepare.router)
 app.include_router(commit.router)
 app.include_router(rollback.router)
-app.include_router(single_bank.router)
+app.include_router(recovery.router)
 
 
 @app.get("/")
