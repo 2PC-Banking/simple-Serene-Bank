@@ -1,295 +1,187 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="2PC Bank Participant console – simulate and observe Two-Phase Commit protocol phases in a distributed banking system.">
-    <title>Bank Participant – 2PC Console</title>
+    <meta name="description" content="Serene Bank gửi tiền liên bank qua Java Coordinator.">
+    <title>Serene Bank - Chuyển Liên Bank 2PC</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-
-<!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <header class="app-header">
     <div class="header-inner">
         <div class="header-brand">
-            <div class="brand-icon">🏦</div>
-            <span class="brand-name">Bank Participant</span>
-            <span class="brand-tag">2PC Protocol</span>
+            <div class="brand-icon">2PC</div>
+            <span class="brand-name">Serene Bank</span>
+            <span class="brand-tag">Gửi tiền qua Java Coordinator</span>
         </div>
         <div class="server-status" id="serverStatus">
             <span class="status-dot"></span>
-            <span class="status-text">Checking…</span>
+            <span class="status-text">Đang kiểm tra...</span>
         </div>
     </div>
 </header>
 
-<!-- ── Main ───────────────────────────────────────────────────────────────── -->
 <main class="app-main">
-
-    <!-- Row 1: Transaction Setup (left) + Participant State (right) -->
-    <div class="top-row">
-
-        <!-- Transaction Setup -->
-        <section class="card" id="section-setup">
-            <div class="card-header">
-                <span class="card-title">Transaction Setup</span>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn btn-ghost btn-sm" onclick="resetTransaction()">↺ Reset</button>
-                    <button class="btn btn-primary btn-sm" onclick="executeAutoFlow()">▶ Run Full 2PC</button>
+    <section class="card transfer-console">
+        <div class="card-header">
+            <span class="card-title">Chuyển tiền Serene -> Family Bank</span>
+            <button class="btn btn-ghost btn-sm" onclick="refreshAll()">Làm mới</button>
+        </div>
+        <div class="card-body">
+            <div class="service-strip">
+                <div class="service-chip" id="serviceSerene">
+                    <span class="status-dot"></span>
+                    <div>
+                        <strong>Serene Gateway</strong>
+                        <span>đang kiểm tra</span>
+                    </div>
+                </div>
+                <div class="service-chip" id="serviceCoordinator">
+                    <span class="status-dot"></span>
+                    <div>
+                        <strong>Java Coordinator</strong>
+                        <span>đang kiểm tra</span>
+                    </div>
+                </div>
+                <div class="service-chip" id="serviceFamily">
+                    <span class="status-dot"></span>
+                    <div>
+                        <strong>Family Backend</strong>
+                        <span>đang kiểm tra</span>
+                    </div>
                 </div>
             </div>
-            <div class="card-body">
-                <div class="form-grid">
-                    <div class="field" style="grid-column: 1/-1;">
-                        <label class="field-label" for="txId">Transaction ID</label>
-                        <div class="input-group">
-                            <input type="text" id="txId" class="tx-id-input" placeholder="TX-00000000-XXXX" autocomplete="off">
-                            <button class="btn btn-ghost btn-sm" onclick="generateTxId()">Auto</button>
-                        </div>
-                    </div>
+
+            <div class="transfer-layout">
+                <form id="transferForm" class="transfer-form">
+                    <input type="hidden" id="clientTxId">
                     <div class="field">
-                        <label class="field-label" for="accountId">Account</label>
-                        <select id="accountId">
-                            <option value="">— Select account —</option>
+                        <label class="field-label" for="fromAccount">Tài khoản nguồn Serene</label>
+                        <select id="fromAccount">
+                            <option value="">Đang tải tài khoản...</option>
                         </select>
                     </div>
                     <div class="field">
-                        <label class="field-label" for="operation">Operation</label>
-                        <select id="operation">
-                            <option value="DEBIT">DEBIT  (withdraw)</option>
-                            <option value="CREDIT">CREDIT (deposit)</option>
+                        <label class="field-label" for="toAccount">Tài khoản nhận Family</label>
+                        <input type="text" id="toAccount" value="1000000002" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="amount">Số tiền</label>
+                        <input type="number" id="amount" min="1000" step="1" inputmode="numeric" value="50000">
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="scenario">Kịch bản test</label>
+                        <select id="scenario" onchange="applyScenarioDefaults()">
+                            <option value="happy_path">Thành công: COMMITTED</option>
+                            <option value="invalid_destination">Lỗi tài khoản Family: ROLLBACK</option>
+                            <option value="insufficient_source_balance">Serene không đủ tiền: ROLLBACK</option>
+                            <option value="source_prepare_crash">Serene crash trước vote: lỗi Phase 1</option>
+                            <option value="source_commit_ack_lost">Serene mất ACK sau COMMIT: IN_DOUBT</option>
+                            <option value="source_commit_fail_before_apply">Serene lỗi trước COMMIT: IN_DOUBT</option>
+                            <option value="source_rollback_ack_lost">Rollback nhưng mất ACK: IN_DOUBT</option>
                         </select>
                     </div>
-                    <div class="field">
-                        <label class="field-label" for="amount">Amount (VND)</label>
-                        <input type="number" id="amount" min="1000" step="10000" value="500000">
+                    <div class="field wide">
+                        <label class="field-label" for="note">Nội dung</label>
+                        <input type="text" id="note" value="Serene web 2PC demo" autocomplete="off">
                     </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Participant State -->
-        <section class="card" id="section-state">
-            <div class="card-header">
-                <span class="card-title">Participant State</span>
-            </div>
-            <div class="state-panel">
-                <div class="state-main state-idle" id="stateMain">
-                    <div class="state-label">Status</div>
-                    <div class="state-value" id="participantStatus">IDLE</div>
-                </div>
-                <div class="state-meta">
-                    <div class="meta-box">
-                        <div class="meta-label">Vote</div>
-                        <div class="meta-value" id="participantVote">—</div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="submitTransfer">Gửi qua Java Coordinator</button>
+                        <button type="button" class="btn btn-ghost" onclick="resetFormDefaults()">Reset form</button>
                     </div>
-                    <div class="meta-box">
-                        <div class="meta-label">Decision</div>
-                        <div class="meta-value" id="coordinatorDecision">WAITING</div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </div>
+                </form>
 
-    <!-- Row 2: Phase 1 + Phase 2 panels -->
-    <div class="phase-row">
+                <aside class="scenario-help" id="scenarioHelp">
+                    Chọn kịch bản rồi bấm gửi. Mã client transaction và coordinator transaction được tự sinh trong nền.
+                </aside>
+            </div>
+        </div>
+    </section>
 
-        <!-- Phase 1 -->
-        <section class="card" id="section-phase1">
-            <div class="card-header">
-                <span class="card-title">
-                    <span class="phase-badge phase-badge-1">Phase 1</span>
-                    Receive PREPARE → Send Vote
-                </span>
+    <section class="card result-card">
+        <div class="card-header">
+            <span class="card-title">Kết quả từ Java Coordinator</span>
+            <div class="filter-row">
+                <button class="btn btn-ghost btn-sm" onclick="refreshCoordinatorStatus()" id="refreshStatusBtn" disabled>Cập nhật trạng thái</button>
+                <button class="btn btn-ghost btn-sm" onclick="retryDecision()" id="retryDecisionBtn" disabled>Retry decision</button>
+                <button class="btn btn-ghost btn-sm" onclick="toggleRawJson()">Ẩn/hiện JSON</button>
             </div>
-            <div class="card-body">
-                <div class="field" style="margin-bottom:12px;">
-                    <label class="field-label" for="phase1ReceiveDelay">Processing Delay (ms)</label>
-                    <input type="number" id="phase1ReceiveDelay" min="0" step="100" value="0" style="max-width:160px;">
-                </div>
+        </div>
+        <div id="resultPanel" class="result-panel">
+            <div class="table-empty">Chưa có giao dịch. Hãy gửi một lệnh chuyển tiền ở form phía trên.</div>
+        </div>
+        <pre id="rawJson" class="recovery-result" style="display:none;"></pre>
+    </section>
 
-                <div class="sim-group-label">Fault Simulation</div>
-                <div class="sim-options">
-                    <label class="sim-label" for="phase1DropReceive">
-                        <input type="checkbox" id="phase1DropReceive">
-                        <span class="sim-text">
-                            Drop inbound PREPARE
-                            <span class="sim-sub">Participant never receives the PREPARE request</span>
-                        </span>
-                    </label>
-                    <label class="sim-label" for="phase1ForceNo">
-                        <input type="checkbox" id="phase1ForceNo">
-                        <span class="sim-text">
-                            Force Vote NO
-                            <span class="sim-sub">Participant votes NO (e.g., insufficient funds)</span>
-                        </span>
-                    </label>
-                    <label class="sim-label" for="phase1LoseVoteResponse">
-                        <input type="checkbox" id="phase1LoseVoteResponse">
-                        <span class="sim-text">
-                            Crash before sending Vote
-                            <span class="sim-sub">PREPARED written to DB but response lost</span>
-                        </span>
-                    </label>
-                </div>
-            </div>
-            <div class="action-row">
-                <button class="btn btn-warning" onclick="runPrepare()" id="btnPrepare">
-                    ▶ Execute Phase 1
-                </button>
-            </div>
-        </section>
-
-        <!-- Phase 2 -->
-        <section class="card" id="section-phase2">
-            <div class="card-header">
-                <span class="card-title">
-                    <span class="phase-badge phase-badge-2">Phase 2</span>
-                    Receive Decision → Apply &amp; ACK
-                </span>
-            </div>
-            <div class="card-body">
-                <div class="form-grid" style="margin-bottom:12px;">
-                    <div class="field">
-                        <label class="field-label" for="phase2Decision">Decision</label>
-                        <select id="phase2Decision">
-                            <option value="COMMIT">COMMIT</option>
-                            <option value="ROLLBACK">ROLLBACK</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label class="field-label" for="phase2ReceiveDelay">Apply Delay (ms)</label>
-                        <input type="number" id="phase2ReceiveDelay" min="0" step="100" value="0">
-                    </div>
-                </div>
-
-                <div class="sim-group-label">Fault Simulation</div>
-                <div class="sim-options">
-                    <label class="sim-label" for="phase2DropReceive">
-                        <input type="checkbox" id="phase2DropReceive">
-                        <span class="sim-text">
-                            Drop inbound Decision
-                            <span class="sim-sub">Participant never receives COMMIT/ROLLBACK</span>
-                        </span>
-                    </label>
-                    <label class="sim-label" for="phase2FailBeforeApply">
-                        <input type="checkbox" id="phase2FailBeforeApply">
-                        <span class="sim-text">
-                            Crash before apply (COMMIT only)
-                            <span class="sim-sub">Fails before writing balance change to DB</span>
-                        </span>
-                    </label>
-                    <label class="sim-label" for="phase2LoseAck">
-                        <input type="checkbox" id="phase2LoseAck">
-                        <span class="sim-text">
-                            Crash after apply (ACK lost)
-                            <span class="sim-sub">DB updated but coordinator sees timeout</span>
-                        </span>
-                    </label>
-                </div>
-            </div>
-            <div class="action-row">
-                <button class="btn btn-success" onclick="runPhase2()" id="btnExecutePhase2" disabled>
-                    ▶ Execute Phase 2
-                </button>
-            </div>
-        </section>
-    </div>
-
-    <!-- Row 3: Timeline (left) + Account Snapshot (right) -->
     <div class="bottom-row">
-
-        <!-- 2PC Flow Timeline -->
-        <section class="card" id="section-timeline">
+        <section class="card">
             <div class="card-header">
-                <span class="card-title">2PC Flow Timeline</span>
-                <button class="btn btn-ghost btn-sm" onclick="clearFlow()">Clear</button>
+                <span class="card-title">Timeline demo</span>
+                <button class="btn btn-ghost btn-sm" onclick="clearFlow()">Xóa</button>
             </div>
             <div class="timeline" id="flowContainer">
-                <div class="timeline-empty">Run a transaction to see the step-by-step timeline.</div>
+                <div class="timeline-empty">Các bước gửi qua coordinator sẽ hiện ở đây.</div>
             </div>
         </section>
 
-        <!-- Account Snapshot -->
-        <section class="card" id="section-accounts">
+        <section class="card">
             <div class="card-header">
-                <span class="card-title">Account Snapshot</span>
-                <button class="btn btn-ghost btn-sm" onclick="loadAccounts()">⟳ Refresh</button>
+                <span class="card-title">Số dư tài khoản Serene</span>
+                <button class="btn btn-ghost btn-sm" onclick="loadAccounts()">Làm mới</button>
             </div>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr>
-                            <th>Account ID</th>
-                            <th>Name</th>
-                            <th>Balance</th>
-                            <th>Lock</th>
-                        </tr>
+                    <tr>
+                        <th>Tài khoản</th>
+                        <th>Tên</th>
+                        <th>Số dư</th>
+                        <th>Khóa</th>
+                    </tr>
                     </thead>
                     <tbody id="accountsBody">
-                        <tr><td colspan="4" class="table-empty">Loading…</td></tr>
+                    <tr><td colspan="4" class="table-empty">Đang tải...</td></tr>
                     </tbody>
                 </table>
             </div>
         </section>
     </div>
 
-    <!-- Row 4: Transaction Log (full width) -->
-    <section class="card" id="section-txlog">
+    <section class="card">
         <div class="card-header">
-            <span class="card-title">Transaction Log</span>
+            <span class="card-title">Lịch sử participant Serene</span>
             <div class="filter-row">
                 <select id="statusFilter" onchange="loadTransactions()">
-                    <option value="">All statuses</option>
+                    <option value="">Tất cả trạng thái</option>
                     <option value="INIT">INIT</option>
                     <option value="PREPARED">PREPARED</option>
                     <option value="COMMITTED">COMMITTED</option>
                     <option value="ABORTED">ABORTED</option>
                 </select>
-                <button class="btn btn-ghost btn-sm" onclick="loadTransactions()">⟳ Refresh</button>
+                <button class="btn btn-ghost btn-sm" onclick="loadTransactions()">Làm mới</button>
             </div>
         </div>
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Transaction ID</th>
-                        <th>Account</th>
-                        <th>Op</th>
-                        <th>Amount</th>
-                        <th>Status</th>
-                        <th>Timestamp</th>
-                    </tr>
+                <tr>
+                    <th>Tài khoản</th>
+                    <th>Thao tác</th>
+                    <th>Số tiền</th>
+                    <th>Trạng thái</th>
+                    <th>Thời gian</th>
+                </tr>
                 </thead>
                 <tbody id="transactionsBody">
-                    <tr><td colspan="7" class="table-empty">Loading…</td></tr>
+                <tr><td colspan="5" class="table-empty">Đang tải...</td></tr>
                 </tbody>
             </table>
         </div>
     </section>
-
-    <!-- Row 5: Recovery Actions -->
-    <section class="card" id="section-recovery">
-        <div class="card-header">
-            <span class="card-title">Recovery Actions</span>
-        </div>
-        <div class="action-row">
-            <button class="btn btn-ghost" onclick="checkRecovery()">📋 List Pending</button>
-            <button class="btn btn-warning" onclick="autoRollbackExpired()">⏱ Rollback Expired</button>
-            <button class="btn btn-danger" onclick="forceRollbackAll()">⚠ Force Rollback All</button>
-            <button class="btn btn-ghost" onclick="cleanupLocks()">🔓 Cleanup Locks</button>
-        </div>
-        <div id="recoveryResult" class="recovery-result" style="display:none;"></div>
-    </section>
-
 </main>
 
-<!-- Toast container -->
 <div id="toastContainer" class="toast-container"></div>
-
 <script src="js/main.js"></script>
 </body>
 </html>

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     CORS_ALLOW_CREDENTIALS: bool = False
 
     LOCK_TIMEOUT: int = 30
+    COORDINATOR_BASE_URL: str = "http://host.docker.internal:8002"
+    SIMPLE_PARTICIPANT_PUBLIC_URL: str = "http://host.docker.internal:8001"
+    FAMILY_PARTICIPANT_PUBLIC_URL: str = "http://host.docker.internal:5288"
 
     @staticmethod
     def _parse_csv_or_json_list(raw: str) -> list[str]:

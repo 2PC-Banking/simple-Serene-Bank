@@ -13,9 +13,9 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" || exit 1
+        - /opt/mssql-tools18/bin/sqlcmd -C -S tcp:127.0.0.1,1433 -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" || exit 1
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 20
       start_period: 20s
     restart: unless-stopped
@@ -42,6 +42,9 @@ services:
       CORS_ALLOW_METHODS: ${CORS_ALLOW_METHODS:-*}
       CORS_ALLOW_HEADERS: ${CORS_ALLOW_HEADERS:-*}
       CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
+      COORDINATOR_BASE_URL: ${COORDINATOR_BASE_URL:-http://host.docker.internal:8002}
+      SIMPLE_PARTICIPANT_PUBLIC_URL: ${SIMPLE_PARTICIPANT_PUBLIC_URL:-http://host.docker.internal:8001}
+      FAMILY_PARTICIPANT_PUBLIC_URL: ${FAMILY_PARTICIPANT_PUBLIC_URL:-http://host.docker.internal:5288}
     depends_on:
       db:
         condition: service_healthy

@@ -1,48 +1,50 @@
-/**
- * 2PC Bank Participant – Frontend Logic
- * Communicates with the FastAPI backend to drive the Two-Phase Commit protocol.
- */
-
-// ── API base resolution ───────────────────────────────────────────────────────
 function resolveApiBase() {
     const { hostname, port, origin, protocol } = window.location;
     if (protocol === "file:") return "http://localhost:8001/api";
-    if (
-        (hostname === "localhost" || hostname === "127.0.0.1") &&
-        port !== "" && port !== "80" && port !== "8080"
-    ) {
+    if ((hostname === "localhost" || hostname === "127.0.0.1") && port && port !== "80" && port !== "8080") {
         return "http://localhost:8001/api";
     }
     return `${origin}/api`;
 }
 
-const API_BASE  = resolveApiBase();
+const API_BASE = resolveApiBase();
 const HEALTH_URL = API_BASE.replace(/\/api\/?$/, "") + "/health";
+const SERVICES_URL = `${API_BASE}/interbank/services`;
 
-// ── In-memory transaction state ───────────────────────────────────────────────
-const txState = {
-    status:   "IDLE",   // IDLE | PREPARED | COMMITTED | ABORTED
-    vote:     null,     // YES | NO | null
-    decision: null,     // COMMIT | ROLLBACK | null
-    prepared: false,
+let currentTransactionId = null;
+let lastPayload = null;
+
+const scenarioText = {
+    happy_path: "Happy path: Serene debit và Family credit đều vote YES, coordinator quyết định COMMIT.",
+    invalid_destination: "Family account không tồn tại. Family vote NO, coordinator ROLLBACK toàn bộ.",
+    insufficient_source_balance: "Serene không đủ số dư. Serene vote NO, coordinator ROLLBACK.",
+    source_prepare_crash: "Coordinator gọi PREPARE nhưng Serene giả lập crash trước khi trả vote.",
+    source_commit_ack_lost: "Serene đã COMMIT nhưng giả lập mất ACK, coordinator sẽ thấy IN_DOUBT.",
+    source_commit_fail_before_apply: "Serene lỗi trước khi áp dụng COMMIT, coordinator sẽ thấy IN_DOUBT.",
+    source_rollback_ack_lost: "Family vote NO để rollback, Serene rollback nhưng mất ACK nên coordinator có thể IN_DOUBT.",
 };
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
-function now() {
-    return new Date().toLocaleTimeString("en-US", { hour12: false });
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function now() {
+    return new Date().toLocaleTimeString("vi-VN", { hour12: false });
 }
 
 function formatMoney(amount) {
     return new Intl.NumberFormat("vi-VN", {
-        style: "currency", currency: "VND", maximumFractionDigits: 0,
-    }).format(amount);
+        style: "currency",
+        currency: "VND",
+        maximumFractionDigits: 0,
+    }).format(Number(amount || 0));
 }
 
-// ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = "info") {
     const container = document.getElementById("toastContainer");
     const el = document.createElement("div");
@@ -56,69 +58,75 @@ function showToast(message, type = "info") {
     }, 3500);
 }
 
-// ── Generic API call ──────────────────────────────────────────────────────────
 async function apiCall(url, method = "GET", body = null) {
-    const options = {
-        method,
-        headers: { "Content-Type": "application/json" },
-    };
+    const options = { method, headers: { "Content-Type": "application/json" } };
     if (body) options.body = JSON.stringify(body);
 
     const response = await fetch(url, options);
     const raw = await response.text();
-    const ct  = (response.headers.get("content-type") || "").toLowerCase();
-
     let data = null;
     if (raw) {
-        try { data = JSON.parse(raw); } catch { data = null; }
+        try { data = JSON.parse(raw); } catch { data = raw; }
     }
-
     if (!response.ok) {
-        const detail = data?.detail || data?.message ||
-            `HTTP ${response.status}${raw && !data ? ` – ${raw.slice(0, 120)}` : ""}`;
-        throw new Error(detail);
-    }
-
-    if (data === null) {
-        throw new Error(`Non-JSON response from ${url}`);
+        const detail = typeof data === "object" ? data?.detail || data?.message || JSON.stringify(data) : data;
+        const err = new Error(detail || `HTTP ${response.status}`);
+        err.payload = data;
+        throw err;
     }
     return data;
 }
 
-// ── Transaction ID generator ──────────────────────────────────────────────────
-function generateTxId() {
-    const ts   = Date.now().toString(36).toUpperCase();
-    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-    document.getElementById("txId").value = `TX-${ts}-${rand}`;
+function generateClientTxId() {
+    const ts = Date.now().toString(36).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+    return `WEB-SERENE-${ts}-${rand}`;
 }
 
-// ── Read form inputs ──────────────────────────────────────────────────────────
-function getBasePayload() {
-    const txId      = document.getElementById("txId").value.trim();
-    const accountId = document.getElementById("accountId").value;
-    const operation = document.getElementById("operation").value;
-    const amount    = parseFloat(document.getElementById("amount").value);
-
-    if (!txId)          throw new Error("Please enter a Transaction ID");
-    if (!accountId)     throw new Error("Please select an account");
-    if (!amount || amount <= 0) throw new Error("Please enter a valid amount");
-
-    return { txId, accountId, operation, amount };
+function statusBadge(status) {
+    const value = String(status || "UNKNOWN").toUpperCase();
+    const cls = {
+        COMMITTED: "badge-committed",
+        DONE: "badge-committed",
+        ACK: "badge-committed",
+        YES: "badge-committed",
+        ABORTED: "badge-aborted",
+        NO: "badge-aborted",
+        NACK: "badge-aborted",
+        IN_DOUBT: "badge-prepared",
+        PROCESSING_PREPARE: "badge-prepared",
+        PROCESSING_DECISION: "badge-prepared",
+        PREPARED: "badge-prepared",
+        LOCKED: "badge-locked",
+        FREE: "badge-free",
+    }[value] || "badge-init";
+    return `<span class="badge ${cls}">${escapeHtml(value)}</span>`;
 }
 
-// ── Timeline (flow steps) ─────────────────────────────────────────────────────
+function lockBadge(isLocked) {
+    return statusBadge(isLocked ? "LOCKED" : "FREE");
+}
+
+function setServiceChip(id, online, text) {
+    const chip = document.getElementById(id);
+    if (!chip) return;
+    const dot = chip.querySelector(".status-dot");
+    const label = chip.querySelector("span:last-child");
+    dot.className = `status-dot ${online ? "online" : "offline"}`;
+    label.textContent = text;
+}
+
 function addFlowStep(type, title, detail) {
-    const container   = document.getElementById("flowContainer");
+    const container = document.getElementById("flowContainer");
     const placeholder = container.querySelector(".timeline-empty");
     if (placeholder) placeholder.remove();
-
     const row = document.createElement("div");
     row.className = `flow-step ${type}`;
     row.innerHTML = `
         <span class="flow-time">${now()}</span>
         <div>
-            <div class="flow-title">${title}</div>
-            <div class="flow-detail">${detail}</div>
+            <div class="flow-title">${escapeHtml(title)}</div>
+            <div class="flow-detail">${escapeHtml(detail)}</div>
         </div>
     `;
     container.appendChild(row);
@@ -127,361 +135,268 @@ function addFlowStep(type, title, detail) {
 
 function clearFlow() {
     document.getElementById("flowContainer").innerHTML =
-        '<div class="timeline-empty">Run a transaction to see the step-by-step timeline.</div>';
+        '<div class="timeline-empty">Các bước gửi qua coordinator sẽ hiện ở đây.</div>';
 }
 
-// ── Participant state UI ──────────────────────────────────────────────────────
-const STATE_CLASS = {
-    IDLE:      "state-idle",
-    PREPARED:  "state-prepared",
-    COMMITTED: "state-committed",
-    ABORTED:   "state-aborted",
-};
+function applyScenarioDefaults() {
+    const scenario = document.getElementById("scenario").value;
+    document.getElementById("scenarioHelp").textContent = scenarioText[scenario] || "";
 
-function updateStateUI() {
-    const statusEl   = document.getElementById("participantStatus");
-    const voteEl     = document.getElementById("participantVote");
-    const decisionEl = document.getElementById("coordinatorDecision");
-    const stateMain  = document.getElementById("stateMain");
-    const phase2Btn  = document.getElementById("btnExecutePhase2");
-
-    statusEl.textContent   = txState.status;
-    voteEl.textContent     = txState.vote     || "—";
-    decisionEl.textContent = txState.decision || "WAITING";
-
-    // Update state box styling
-    stateMain.className = `state-main ${STATE_CLASS[txState.status] || "state-idle"}`;
-
-    // Enable Phase 2 only when PREPARED
-    phase2Btn.disabled = !txState.prepared;
-
-    // Auto-fill Phase 2 decision based on vote (YES→COMMIT, NO→ROLLBACK)
-    if (txState.vote === "YES") {
-        document.getElementById("phase2Decision").value = "COMMIT";
-    } else if (txState.vote === "NO") {
-        document.getElementById("phase2Decision").value = "ROLLBACK";
+    if (scenario === "invalid_destination" || scenario === "source_rollback_ack_lost") {
+        document.getElementById("toAccount").value = "FAMILY_NOT_FOUND";
+        document.getElementById("amount").value = "50000";
+    } else if (scenario === "insufficient_source_balance") {
+        document.getElementById("toAccount").value = "1000000002";
+        document.getElementById("amount").value = "999999999";
+    } else {
+        document.getElementById("toAccount").value = "1000000002";
+        document.getElementById("amount").value = "50000";
     }
 }
 
-// ── Badges ────────────────────────────────────────────────────────────────────
-function statusBadge(status) {
-    const cls = {
-        INIT:      "badge-init",
-        PREPARED:  "badge-prepared",
-        COMMITTED: "badge-committed",
-        ABORTED:   "badge-aborted",
-    }[status] || "badge-init";
-    return `<span class="badge ${cls}">${status}</span>`;
+function resetFormDefaults() {
+    document.getElementById("scenario").value = "happy_path";
+    document.getElementById("note").value = "Serene web 2PC demo";
+    applyScenarioDefaults();
 }
 
-function lockBadge(isLocked) {
-    return isLocked
-        ? '<span class="badge badge-locked">LOCKED</span>'
-        : '<span class="badge badge-free">FREE</span>';
+function renderResult(payload) {
+    lastPayload = payload;
+    currentTransactionId = payload?.transactionId || payload?.transaction_id || currentTransactionId;
+    document.getElementById("refreshStatusBtn").disabled = !currentTransactionId;
+    document.getElementById("retryDecisionBtn").disabled = payload?.status !== "IN_DOUBT" || !currentTransactionId;
+    document.getElementById("rawJson").textContent = JSON.stringify(payload, null, 2);
+
+    const participants = Array.isArray(payload?.participants) ? payload.participants : [];
+    const participantHtml = participants.length
+        ? participants.map(p => `
+            <tr>
+                <td>${escapeHtml(p.name || p.Name || "-")}</td>
+                <td>${escapeHtml(p.operation || p.Operation || "-")}</td>
+                <td>${statusBadge(p.prepareVote || p.PrepareVote || "UNKNOWN")}</td>
+                <td>${statusBadge(p.decisionAck || p.DecisionAck || "UNKNOWN")}</td>
+                <td>${escapeHtml(p.lastError || p.LastError || "")}</td>
+            </tr>
+        `).join("")
+        : '<tr><td colspan="5" class="table-empty">Chưa có participant state.</td></tr>';
+
+    document.getElementById("resultPanel").innerHTML = `
+        <div class="result-grid">
+            <div><span>Status</span>${statusBadge(payload?.status)}</div>
+            <div><span>Phase</span>${statusBadge(payload?.phase)}</div>
+            <div><span>Decision</span><strong>${escapeHtml(payload?.decision || "-")}</strong></div>
+            <div><span>Số tiền</span><strong>${formatMoney(payload?.amount)}</strong></div>
+            <div><span>Từ Serene</span><strong>${escapeHtml(payload?.fromAccount || "-")}</strong></div>
+            <div><span>Đến Family</span><strong>${escapeHtml(payload?.toAccount || "-")}</strong></div>
+        </div>
+        <div class="table-wrap participant-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Participant</th>
+                        <th>Thao tác</th>
+                        <th>Vote</th>
+                        <th>ACK</th>
+                        <th>Lỗi</th>
+                    </tr>
+                </thead>
+                <tbody>${participantHtml}</tbody>
+            </table>
+        </div>
+    `;
 }
 
-// ── Reset ─────────────────────────────────────────────────────────────────────
-function resetTransaction() {
-    txState.status   = "IDLE";
-    txState.vote     = null;
-    txState.decision = null;
-    txState.prepared = false;
-
-    document.getElementById("phase1ReceiveDelay").value   = "0";
-    document.getElementById("phase1DropReceive").checked  = false;
-    document.getElementById("phase1ForceNo").checked      = false;
-    document.getElementById("phase1LoseVoteResponse").checked = false;
-    document.getElementById("phase2ReceiveDelay").value   = "0";
-    document.getElementById("phase2DropReceive").checked  = false;
-    document.getElementById("phase2FailBeforeApply").checked = false;
-    document.getElementById("phase2LoseAck").checked      = false;
-    document.getElementById("phase2Decision").value       = "COMMIT";
-
-    updateStateUI();
-    clearFlow();
-    generateTxId();
-    showToast("Transaction state reset", "info");
+function toggleRawJson() {
+    const el = document.getElementById("rawJson");
+    el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
-// ── Health check ──────────────────────────────────────────────────────────────
+async function submitTransfer(event) {
+    event.preventDefault();
+    const button = document.getElementById("submitTransfer");
+    button.disabled = true;
+
+    const scenario = document.getElementById("scenario").value;
+    let toAccount = document.getElementById("toAccount").value.trim();
+    let amount = Number(document.getElementById("amount").value || 0);
+
+    if (scenario === "invalid_destination" || scenario === "source_rollback_ack_lost") {
+        toAccount = "FAMILY_NOT_FOUND";
+        amount = 50000;
+    } else if (scenario === "insufficient_source_balance") {
+        toAccount = "1000000002";
+        amount = 999999999;
+    }
+
+    const payload = {
+        clientTxId: generateClientTxId(),
+        fromAccount: document.getElementById("fromAccount").value,
+        toAccount,
+        amount,
+        note: document.getElementById("note").value,
+        destinationBank: "Family Banking",
+        scenario,
+    };
+
+    if (!payload.fromAccount || !payload.toAccount || payload.amount <= 0) {
+        showToast("Vui lòng nhập đủ tài khoản và số tiền hợp lệ.", "warning");
+        button.disabled = false;
+        return;
+    }
+
+    try {
+        addFlowStep("prepare", "Gửi yêu cầu sang Serene gateway", "Gateway sẽ gọi Java Coordinator, không gọi trực tiếp participant từ browser.");
+        const response = await apiCall(`${API_BASE}/interbank/transfer-2pc`, "POST", payload);
+        renderResult(response);
+        addFlowStep(response.success ? "success" : "warning", "Coordinator trả trạng thái", `${response.status || "UNKNOWN"} / ${response.phase || "-"} / ${response.decision || "-"}`);
+        showToast(`Coordinator: ${response.status || "UNKNOWN"}`, response.success ? "success" : "warning");
+        await refreshAll(false);
+    } catch (err) {
+        renderResult({ status: "ERROR", phase: "-", decision: "-", amount: payload.amount, fromAccount: payload.fromAccount, toAccount: payload.toAccount, error: err.message, payload: err.payload });
+        addFlowStep("error", "Gửi coordinator thất bại", err.message);
+        showToast(err.message, "error");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function refreshCoordinatorStatus() {
+    if (!currentTransactionId) return;
+    try {
+        const response = await apiCall(`${API_BASE}/interbank/transfer-2pc/${currentTransactionId}`);
+        renderResult({
+            ...response,
+            fromAccount: lastPayload?.fromAccount,
+            toAccount: lastPayload?.toAccount,
+            amount: response.amount ?? lastPayload?.amount,
+        });
+        addFlowStep("decision", "Cập nhật trạng thái coordinator", `${response.status || "UNKNOWN"} / ${response.phase || "-"}`);
+        await refreshAll(false);
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+async function retryDecision() {
+    if (!currentTransactionId) return;
+    try {
+        const response = await apiCall(`${API_BASE}/interbank/transfer-2pc/${currentTransactionId}/retry-decision`, "POST");
+        renderResult({
+            ...response,
+            fromAccount: lastPayload?.fromAccount,
+            toAccount: lastPayload?.toAccount,
+            amount: response.amount ?? lastPayload?.amount,
+        });
+        addFlowStep("decision", "Retry decision", `${response.status || "UNKNOWN"} / ${response.phase || "-"}`);
+        await refreshAll(false);
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
 async function checkHealth() {
     const statusEl = document.getElementById("serverStatus");
-    const dot  = statusEl.querySelector(".status-dot");
+    const dot = statusEl.querySelector(".status-dot");
     const text = statusEl.querySelector(".status-text");
     try {
         const data = await apiCall(HEALTH_URL);
         if (data.status === "healthy") {
-            dot.className  = "status-dot online";
-            text.textContent = "Bank Online";
+            dot.className = "status-dot online";
+            text.textContent = "Serene gateway online";
+            setServiceChip("serviceSerene", true, "online");
         } else {
-            dot.className  = "status-dot offline";
-            text.textContent = "DB Disconnected";
+            dot.className = "status-dot offline";
+            text.textContent = "Serene gateway lỗi";
+            setServiceChip("serviceSerene", false, "lỗi");
         }
     } catch {
-        dot.className  = "status-dot offline";
-        text.textContent = "Server Offline";
+        dot.className = "status-dot offline";
+        text.textContent = "Serene gateway offline";
+        setServiceChip("serviceSerene", false, "offline");
+    }
+
+    try {
+        const data = await apiCall(SERVICES_URL);
+        const services = data.services || [];
+        const coordinator = services.find(s => s.name === "Java Coordinator");
+        const family = services.find(s => s.name === "Family Backend");
+        if (coordinator) {
+            setServiceChip("serviceCoordinator", coordinator.online, coordinator.online ? "online" : "offline");
+        }
+        if (family) {
+            setServiceChip("serviceFamily", family.online, family.online ? "online" : "offline");
+        }
+    } catch {
+        setServiceChip("serviceCoordinator", false, "không kiểm tra được");
+        setServiceChip("serviceFamily", false, "không kiểm tra được");
     }
 }
 
-// ── Load accounts ─────────────────────────────────────────────────────────────
 async function loadAccounts() {
     try {
         const result = await apiCall(`${API_BASE}/accounts`);
-        const tbody  = document.getElementById("accountsBody");
-        const rows   = result.data || [];
-
+        const rows = result.data || [];
+        const tbody = document.getElementById("accountsBody");
         if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="4" class="table-empty">No accounts found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Chưa có tài khoản.</td></tr>';
             return;
         }
-
         tbody.innerHTML = rows.map(acc => `
             <tr>
-                <td class="cell-mono">${acc.account_id}</td>
-                <td>${acc.account_name}</td>
+                <td class="cell-mono">${escapeHtml(acc.account_id)}</td>
+                <td>${escapeHtml(acc.account_name)}</td>
                 <td class="cell-mono">${formatMoney(acc.balance)}</td>
                 <td>${lockBadge(acc.is_locked)}</td>
             </tr>
         `).join("");
 
-        const select    = document.getElementById("accountId");
-        const currentVal = select.value;
-        select.innerHTML =
-            '<option value="">— Select account —</option>' +
-            rows.map(acc =>
-                `<option value="${acc.account_id}">${acc.account_id} – ${acc.account_name} (${formatMoney(acc.balance)})</option>`
-            ).join("");
-        if (currentVal) select.value = currentVal;
+        const select = document.getElementById("fromAccount");
+        const current = select.value;
+        select.innerHTML = rows.map(acc =>
+            `<option value="${escapeHtml(acc.account_id)}">${escapeHtml(acc.account_id)} - ${escapeHtml(acc.account_name)} (${formatMoney(acc.balance)})</option>`
+        ).join("");
+        select.value = current || "ACC001";
     } catch (err) {
         document.getElementById("accountsBody").innerHTML =
-            `<tr><td colspan="4" class="table-empty" style="color:var(--danger)">${err.message}</td></tr>`;
+            `<tr><td colspan="4" class="table-empty" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
     }
 }
 
-// ── Load transaction log ──────────────────────────────────────────────────────
 async function loadTransactions() {
     try {
         const filter = document.getElementById("statusFilter").value;
-        const url    = filter
-            ? `${API_BASE}/transactions?status_filter=${filter}`
-            : `${API_BASE}/transactions`;
-
+        const url = filter ? `${API_BASE}/transactions?status_filter=${filter}` : `${API_BASE}/transactions`;
         const result = await apiCall(url);
-        const tbody  = document.getElementById("transactionsBody");
-
-        if (!result.data?.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="table-empty">No transactions found</td></tr>';
+        const rows = result.data || [];
+        const tbody = document.getElementById("transactionsBody");
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="table-empty">Chưa có transaction.</td></tr>';
             return;
         }
-
-        tbody.innerHTML = result.data.map(tx => `
+        tbody.innerHTML = rows.map(tx => `
             <tr>
-                <td class="cell-mono">${tx.id}</td>
-                <td class="cell-mono">${tx.transaction_id}</td>
-                <td class="cell-mono">${tx.account_id}</td>
-                <td><strong>${tx.operation}</strong></td>
+                <td class="cell-mono">${escapeHtml(tx.account_id)}</td>
+                <td><strong>${escapeHtml(tx.operation)}</strong></td>
                 <td class="cell-mono">${formatMoney(tx.amount)}</td>
                 <td>${statusBadge(tx.status)}</td>
-                <td class="cell-mono">${new Date(tx.created_at).toLocaleString("en-GB")}</td>
+                <td class="cell-mono">${new Date(tx.created_at).toLocaleString("vi-VN")}</td>
             </tr>
         `).join("");
     } catch (err) {
         document.getElementById("transactionsBody").innerHTML =
-            `<tr><td colspan="7" class="table-empty" style="color:var(--danger)">${err.message}</td></tr>`;
+            `<tr><td colspan="5" class="table-empty" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
     }
 }
 
-// ── Phase 1: PREPARE ──────────────────────────────────────────────────────────
-async function runPrepare() {
-    let base;
-    try { base = getBasePayload(); } catch (err) {
-        showToast(err.message, "error"); return;
-    }
-
-    // ① Drop simulation – pretend PREPARE was never received
-    if (document.getElementById("phase1DropReceive").checked) {
-        txState.status   = "IDLE";
-        txState.vote     = null;
-        txState.prepared = false;
-        txState.decision = null;
-        updateStateUI();
-        addFlowStep("warning", "PREPARE Dropped", "Participant did not receive the PREPARE request (inbound dropped)");
-        showToast("Inbound PREPARE dropped", "warning");
-        return;
-    }
-
-    // ② Force-NO simulation – skip API, return NO immediately
-    if (document.getElementById("phase1ForceNo").checked) {
-        txState.status   = "IDLE";
-        txState.vote     = "NO";
-        txState.prepared = false;
-        txState.decision = "ROLLBACK";
-        updateStateUI();
-        addFlowStep("error", "Vote NO Sent", "Participant received PREPARE but voted NO – coordinator will ROLLBACK");
-        showToast("Vote NO simulated", "warning");
-        return;
-    }
-
-    addFlowStep("prepare", "PREPARE Received", `TX: ${base.txId} · ${base.operation} ${formatMoney(base.amount)} on ${base.accountId}`);
-
-    try {
-        const response = await apiCall(`${API_BASE}/prepare`, "POST", {
-            transaction_id:           base.txId,
-            account_id:               base.accountId,
-            operation:                base.operation,
-            amount:                   base.amount,
-            simulate_delay_ms:        Number(document.getElementById("phase1ReceiveDelay").value || 0),
-            simulate_crash_before_vote: document.getElementById("phase1LoseVoteResponse").checked,
-        });
-
-        txState.vote     = response.vote;
-        txState.status   = "PREPARED";
-        txState.prepared = true;
-        txState.decision = null;
-        updateStateUI(); // also auto-fills Phase 2 decision = COMMIT
-
-        addFlowStep("success", "Vote YES Sent", "Account locked, transaction log written → coordinator will COMMIT");
-        showToast("Phase 1 complete – Vote YES", "success");
-
-        await Promise.all([loadAccounts(), loadTransactions()]);
-    } catch (err) {
-        txState.vote     = null;
-        txState.status   = "IDLE";
-        txState.prepared = false;
-        txState.decision = "ROLLBACK";
-        updateStateUI();
-
-        addFlowStep("error", "PREPARE Failed", err.message);
-        showToast(`PREPARE failed: ${err.message}`, "error");
-        await Promise.all([loadAccounts(), loadTransactions()]);
-    }
+async function refreshAll(includeHealth = true) {
+    const tasks = [loadAccounts(), loadTransactions()];
+    if (includeHealth) tasks.push(checkHealth());
+    await Promise.allSettled(tasks);
 }
 
-// ── Phase 2: COMMIT / ROLLBACK ────────────────────────────────────────────────
-async function runPhase2() {
-    if (!txState.prepared) {
-        showToast("Phase 1 must succeed before executing Phase 2", "warning");
-        return;
-    }
-
-    const txId         = document.getElementById("txId").value.trim();
-    const decision     = document.getElementById("phase2Decision").value;
-    const delay        = Number(document.getElementById("phase2ReceiveDelay").value || 0);
-    const failBefore   = document.getElementById("phase2FailBeforeApply").checked;
-    const loseAck      = document.getElementById("phase2LoseAck").checked;
-
-    // Drop simulation
-    if (document.getElementById("phase2DropReceive").checked) {
-        addFlowStep("warning", "Decision Dropped", `Participant did not receive the ${decision} decision`);
-        showToast("Inbound decision dropped", "warning");
-        return;
-    }
-
-    txState.decision = decision;
-    updateStateUI();
-    addFlowStep("decision", `Decision Received: ${decision}`, `Coordinator sent ${decision} for TX: ${txId}`);
-
-    try {
-        if (decision === "COMMIT") {
-            const response = await apiCall(`${API_BASE}/commit`, "POST", {
-                transaction_id:        txId,
-                simulate_delay_ms:     delay,
-                simulate_fail_before_apply: failBefore,
-                simulate_crash:        loseAck,
-            });
-
-            txState.status   = "COMMITTED";
-            txState.prepared = false;
-            updateStateUI();
-
-            addFlowStep(
-                "success",
-                "COMMIT Applied · ACK Sent",
-                `Balance updated → ${formatMoney(response.new_balance)} · Account unlocked`
-            );
-            showToast("COMMIT successful", "success");
-        } else {
-            await apiCall(`${API_BASE}/rollback`, "POST", {
-                transaction_id:           txId,
-                simulate_delay_ms:        delay,
-                simulate_crash_before_apply: false,
-                simulate_crash_after_apply:  loseAck,
-            });
-
-            txState.status   = "ABORTED";
-            txState.prepared = false;
-            txState.vote     = "NO";
-            updateStateUI();
-
-            addFlowStep("warning", "ROLLBACK Applied · ACK Sent", "Transaction aborted · Account unlocked · Balance unchanged");
-            showToast("ROLLBACK complete", "warning");
-        }
-    } catch (err) {
-        addFlowStep("error", `${decision} Exception`, err.message);
-        showToast(`${decision} failed: ${err.message}`, "error");
-    }
-
-    await Promise.all([loadAccounts(), loadTransactions()]);
-}
-
-// ── Auto-run full 2PC ─────────────────────────────────────────────────────────
-async function executeAutoFlow() {
-    await runPrepare();
-    if (txState.prepared) {
-        await sleep(400);
-        await runPhase2();
-    }
-}
-
-// ── Recovery actions ──────────────────────────────────────────────────────────
-function showRecoveryResult(data) {
-    const el = document.getElementById("recoveryResult");
-    el.style.display = "block";
-    el.textContent   = JSON.stringify(data, null, 2);
-}
-
-async function checkRecovery() {
-    try {
-        const result = await apiCall(`${API_BASE}/recovery/pending`);
-        showRecoveryResult(result);
-        showToast(`${result.pending_count} pending transaction(s)`, "info");
-    } catch (err) { showToast(err.message, "error"); }
-}
-
-async function autoRollbackExpired() {
-    try {
-        const result = await apiCall(`${API_BASE}/recovery/auto-rollback-expired`, "POST");
-        showRecoveryResult(result);
-        showToast(`Auto-rolled back: ${result.rolled_back_count}`, result.rolled_back_count ? "warning" : "success");
-        await Promise.all([loadAccounts(), loadTransactions()]);
-    } catch (err) { showToast(err.message, "error"); }
-}
-
-async function forceRollbackAll() {
-    try {
-        const result = await apiCall(`${API_BASE}/recovery/force-rollback`, "POST");
-        showRecoveryResult(result);
-        showToast(`Force-rolled back: ${result.rolled_back_count}`, "warning");
-        await Promise.all([loadAccounts(), loadTransactions()]);
-    } catch (err) { showToast(err.message, "error"); }
-}
-
-async function cleanupLocks() {
-    try {
-        const result = await apiCall(`${API_BASE}/recovery/cleanup-locks`, "POST");
-        showRecoveryResult(result);
-        showToast(`Cleaned ${result.cleaned_count} stale lock(s)`, "success");
-        await loadAccounts();
-    } catch (err) { showToast(err.message, "error"); }
-}
-
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-    generateTxId();
-    updateStateUI();
-    await checkHealth();
-    await Promise.all([loadAccounts(), loadTransactions()]);
-
-    // Periodic health check every 30 s
+    document.getElementById("transferForm").addEventListener("submit", submitTransfer);
+    resetFormDefaults();
+    await refreshAll(true);
     setInterval(checkHealth, 30_000);
 });
