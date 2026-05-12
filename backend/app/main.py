@@ -11,7 +11,7 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.database import test_connection, init_db, seed_db, create_database_if_not_exists
-from app.api import balance, prepare, commit, rollback, recovery, interbank
+from app.api import balance, prepare, commit, rollback, recovery, interbank, simulation
 from app.services.recovery_service import RecoveryService
 
 # Tạo FastAPI app
@@ -110,6 +110,7 @@ app.include_router(commit.router)
 app.include_router(rollback.router)
 app.include_router(recovery.router)
 app.include_router(interbank.router)
+app.include_router(simulation.router)
 
 
 @app.get("/")

@@ -195,9 +195,10 @@ class TransactionService:
         ROLLBACK phase: Hủy transaction, unlock tài khoản.
         
         Steps:
-        1. Tìm transaction log với status = PREPARED hoặc INIT
-        2. Cập nhật status → ABORTED
-        3. Unlock tài khoản
+        1. Tìm transaction log
+        2a. Nếu PREPARED/INIT → Abort và unlock (chưa apply balance thật)
+        2b. Nếu COMMITTED → Tạo compensating transaction đảo ngược balance (force rollback sau timeout)
+        3. Trả về ABORTED
         """
         log_transaction(transaction_id, "ROLLBACK", "Starting rollback phase")
 
@@ -208,14 +209,62 @@ class TransactionService:
         ).first()
 
         if tx_log is None:
-            # Already COMMITTED → cannot rollback
+            # Kiểm tra đã COMMITTED chưa
             committed = db.query(TransactionLog).filter(
                 TransactionLog.transaction_id == transaction_id,
                 TransactionLog.status == "COMMITTED"
             ).first()
             if committed:
-                log_error(transaction_id, "ROLLBACK", "Cannot rollback: transaction already COMMITTED")
-                raise TransactionInvalidStateError(transaction_id, "COMMITTED", "PREPARED")
+                # ── COMPENSATING ROLLBACK ──────────────────────────────────────────
+                # Coordinator force rollback sau timeout Phase 2.
+                # Giao dịch đã apply balance thật → cần đảo ngược.
+                log_transaction(transaction_id, "COMPENSATE_ROLLBACK",
+                                f"Coordinator forced ROLLBACK after timeout. Creating compensating transaction.")
+
+                account = db.query(Account).filter(
+                    Account.account_id == committed.account_id
+                ).with_for_update().first()
+
+                if account is None:
+                    log_error(transaction_id, "COMPENSATE_ROLLBACK", f"Account '{committed.account_id}' not found")
+                    raise AccountNotFoundError(committed.account_id)
+
+                # Đảo ngược: CREDIT đã nhận → DEBIT lại, DEBIT đã trừ → CREDIT lại
+                comp_operation = "DEBIT" if committed.operation == "CREDIT" else "CREDIT"
+                if committed.operation == "CREDIT":
+                    account.balance = account.balance - committed.amount  # Trừ lại tiền đã credit nhầm
+                elif committed.operation == "DEBIT":
+                    account.balance = account.balance + committed.amount  # Hoàn lại tiền đã debit
+
+                # Unlock tài khoản
+                account.is_locked = False
+                account.locked_by_tx = None
+
+                # Đánh dấu log → ABORTED (compensated)
+                committed.status = "ABORTED"
+                
+                # Tạo giao dịch mới để ghi nhận việc bù trừ
+                compensate_tx = TransactionLog(
+                    transaction_id=f"{transaction_id}_COMPENSATE",
+                    account_id=committed.account_id,
+                    operation=comp_operation,
+                    amount=committed.amount,
+                    status="COMMITTED"
+                )
+                db.add(compensate_tx)
+                
+                db.commit()
+
+                new_balance = float(account.balance)
+                log_transaction(transaction_id, "COMPENSATE_ROLLBACK",
+                                f"Balance reversed: {committed.operation} of {committed.amount} reversed. New balance: {new_balance}")
+
+                return {
+                    "transaction_id": transaction_id,
+                    "status": "ABORTED",
+                    "message": f"Compensating rollback applied. {committed.operation} of {float(committed.amount):,.2f} reversed.",
+                    "account_id": committed.account_id,
+                }
 
             # Already ABORTED → idempotent
             aborted = db.query(TransactionLog).filter(

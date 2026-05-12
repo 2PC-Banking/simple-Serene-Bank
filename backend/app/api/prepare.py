@@ -13,6 +13,7 @@ from app.schemas.prepare_schema import (
 )
 from app.services.transaction_service import TransactionService
 from app.utils.logger import log_error, log_transaction
+from app.api.simulation import get_current_receiver_simulation
 
 router = APIRouter(prefix="/api", tags=["2PC - Prepare"])
 
@@ -31,6 +32,12 @@ def prepare(request: PrepareRequest, db: Session = Depends(get_db)):
     Nếu FAIL → trả lỗi tương ứng
     """
     try:
+        if request.operation.value == "CREDIT":
+            sim = get_current_receiver_simulation()
+            request.simulate_delay_ms = max(request.simulate_delay_ms, sim.simulate_delay_ms)
+            if sim.simulate_prepare_crash_before_vote:
+                request.simulate_crash_before_vote = True
+
         if request.simulate_delay_ms > 0:
             log_transaction(
                 request.transaction_id,
@@ -38,6 +45,29 @@ def prepare(request: PrepareRequest, db: Session = Depends(get_db)):
                 f"Simulating delay {request.simulate_delay_ms}ms before vote",
             )
             time.sleep(request.simulate_delay_ms / 1000)
+
+        from app.models.account_model import Account
+        from app.models.transaction_model import TransactionLog
+        from decimal import Decimal
+
+        # Ghi log INIT ngay từ đầu để UI có thể hiển thị
+        account = db.query(Account).filter(Account.account_id == request.account_id).first()
+        
+        # Luôn ghi log INIT ngay từ đầu để UI có thể hiển thị kể cả khi sai tài khoản
+        existing = db.query(TransactionLog).filter(
+            TransactionLog.transaction_id == request.transaction_id,
+            TransactionLog.account_id == request.account_id
+        ).first()
+        if not existing:
+            tx_init = TransactionLog(
+                transaction_id=request.transaction_id,
+                account_id=request.account_id,
+                operation=request.operation.value,
+                amount=Decimal(str(request.amount)),
+                status="INIT"
+            )
+            db.add(tx_init)
+            db.commit()
 
         if request.simulate_crash_before_vote:
             log_error(request.transaction_id, "PREPARE", "Simulated crash before vote response")
@@ -61,7 +91,25 @@ def prepare(request: PrepareRequest, db: Session = Depends(get_db)):
     except Exception as e:
         log_error(request.transaction_id, "PREPARE", str(e))
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Internal error during PREPARE: {str(e)}")
+        
+        # Nếu lỗi nghiệp vụ (như không đủ tiền, sai tài khoản), ghi log ABORTED để UI thấy
+        existing = db.query(TransactionLog).filter(
+            TransactionLog.transaction_id == request.transaction_id,
+            TransactionLog.account_id == request.account_id
+        ).first()
+        if existing and existing.status == "INIT":
+            existing.status = "ABORTED"
+            db.commit()
+                
+        # Thay vì văng lỗi 500, trả về vote NO cho Coordinator
+        return PrepareResponse(
+            transaction_id=request.transaction_id,
+            vote="NO",
+            message=str(e),
+            account_id=request.account_id,
+            operation=request.operation.value,
+            amount=request.amount
+        )
 
 
 @router.post("/prepare/coordinator-payload", response_model=CoordinatorPreparePayloadResponse)

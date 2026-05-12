@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,181 +8,219 @@
     <title>Serene Bank - Chuyển Liên Bank 2PC</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
-<header class="app-header">
-    <div class="header-inner">
-        <div class="header-brand">
-            <div class="brand-icon">2PC</div>
-            <span class="brand-name">Serene Bank</span>
-            <span class="brand-tag">Gửi tiền qua Java Coordinator</span>
-        </div>
-        <div class="server-status" id="serverStatus">
-            <span class="status-dot"></span>
-            <span class="status-text">Đang kiểm tra...</span>
-        </div>
-    </div>
-</header>
-
-<main class="app-main">
-    <section class="card transfer-console">
-        <div class="card-header">
-            <span class="card-title">Chuyển tiền Serene -> Family Bank</span>
-            <button class="btn btn-ghost btn-sm" onclick="refreshAll()">Làm mới</button>
-        </div>
-        <div class="card-body">
-            <div class="service-strip">
-                <div class="service-chip" id="serviceSerene">
-                    <span class="status-dot"></span>
-                    <div>
-                        <strong>Serene Gateway</strong>
-                        <span>đang kiểm tra</span>
-                    </div>
-                </div>
-                <div class="service-chip" id="serviceCoordinator">
-                    <span class="status-dot"></span>
-                    <div>
-                        <strong>Java Coordinator</strong>
-                        <span>đang kiểm tra</span>
-                    </div>
-                </div>
-                <div class="service-chip" id="serviceFamily">
-                    <span class="status-dot"></span>
-                    <div>
-                        <strong>Family Backend</strong>
-                        <span>đang kiểm tra</span>
-                    </div>
-                </div>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="header-brand">
+                <div class="brand-icon">2PC</div>
+                <span class="brand-name">Serene Bank</span>
+                <span class="brand-tag">Gửi tiền qua Java Coordinator</span>
             </div>
-
-            <div class="transfer-layout">
-                <form id="transferForm" class="transfer-form">
-                    <input type="hidden" id="clientTxId">
-                    <div class="field">
-                        <label class="field-label" for="fromAccount">Tài khoản nguồn Serene</label>
-                        <select id="fromAccount">
-                            <option value="">Đang tải tài khoản...</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label class="field-label" for="toAccount">Tài khoản nhận Family</label>
-                        <input type="text" id="toAccount" value="1000000002" autocomplete="off">
-                    </div>
-                    <div class="field">
-                        <label class="field-label" for="amount">Số tiền</label>
-                        <input type="number" id="amount" min="1000" step="1" inputmode="numeric" value="50000">
-                    </div>
-                    <div class="field">
-                        <label class="field-label" for="scenario">Kịch bản test</label>
-                        <select id="scenario" onchange="applyScenarioDefaults()">
-                            <option value="happy_path">Thành công: COMMITTED</option>
-                            <option value="invalid_destination">Lỗi tài khoản Family: ROLLBACK</option>
-                            <option value="insufficient_source_balance">Serene không đủ tiền: ROLLBACK</option>
-                            <option value="source_prepare_crash">Serene crash trước vote: lỗi Phase 1</option>
-                            <option value="source_commit_ack_lost">Serene mất ACK sau COMMIT: IN_DOUBT</option>
-                            <option value="source_commit_fail_before_apply">Serene lỗi trước COMMIT: IN_DOUBT</option>
-                            <option value="source_rollback_ack_lost">Rollback nhưng mất ACK: IN_DOUBT</option>
-                        </select>
-                    </div>
-                    <div class="field wide">
-                        <label class="field-label" for="note">Nội dung</label>
-                        <input type="text" id="note" value="Serene web 2PC demo" autocomplete="off">
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary" id="submitTransfer">Gửi qua Java Coordinator</button>
-                        <button type="button" class="btn btn-ghost" onclick="resetFormDefaults()">Reset form</button>
-                    </div>
-                </form>
-
-                <aside class="scenario-help" id="scenarioHelp">
-                    Chọn kịch bản rồi bấm gửi. Mã client transaction và coordinator transaction được tự sinh trong nền.
-                </aside>
+            <div class="server-status" id="serverStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Đang kiểm tra...</span>
             </div>
         </div>
-    </section>
+    </header>
 
-    <section class="card result-card">
-        <div class="card-header">
-            <span class="card-title">Kết quả từ Java Coordinator</span>
-            <div class="filter-row">
-                <button class="btn btn-ghost btn-sm" onclick="refreshCoordinatorStatus()" id="refreshStatusBtn" disabled>Cập nhật trạng thái</button>
-                <button class="btn btn-ghost btn-sm" onclick="retryDecision()" id="retryDecisionBtn" disabled>Retry decision</button>
-                <button class="btn btn-ghost btn-sm" onclick="toggleRawJson()">Ẩn/hiện JSON</button>
+    <main class="app-main">
+        <section class="card transfer-console">
+            <div class="card-header">
+                <span class="card-title">Chuyển tiền Serene -> Family Bank</span>
+                <button class="btn btn-ghost btn-sm" onclick="refreshAll()">Làm mới</button>
             </div>
-        </div>
-        <div id="resultPanel" class="result-panel">
-            <div class="table-empty">Chưa có giao dịch. Hãy gửi một lệnh chuyển tiền ở form phía trên.</div>
-        </div>
-        <pre id="rawJson" class="recovery-result" style="display:none;"></pre>
-    </section>
+            <div class="card-body">
+                <div class="service-strip">
+                    <div class="service-chip" id="serviceSerene">
+                        <span class="status-dot"></span>
+                        <div>
+                            <strong>Serene Gateway</strong>
+                            <span>đang kiểm tra</span>
+                        </div>
+                    </div>
+                    <div class="service-chip" id="serviceCoordinator">
+                        <span class="status-dot"></span>
+                        <div>
+                            <strong>Java Coordinator</strong>
+                            <span>đang kiểm tra</span>
+                        </div>
+                    </div>
+                    <div class="service-chip" id="serviceFamily">
+                        <span class="status-dot"></span>
+                        <div>
+                            <strong>Family Backend</strong>
+                            <span>đang kiểm tra</span>
+                        </div>
+                    </div>
+                </div>
 
-    <div class="bottom-row">
+                <div class="transfer-layout">
+                    <form id="transferForm" class="transfer-form">
+                        <input type="hidden" id="clientTxId">
+                        <div class="field">
+                            <label class="field-label" for="fromAccount">Tài khoản nguồn Serene</label>
+                            <select id="fromAccount">
+                                <option value="">Đang tải tài khoản...</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="toAccount">Tài khoản nhận Family</label>
+                            <input type="text" id="toAccount" value="1000000002" autocomplete="off">
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="amount">Số tiền</label>
+                            <input type="number" id="amount" min="1000" step="1" inputmode="numeric" value="50000">
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="scenario">Kịch bản test</label>
+                            <select id="scenario" onchange="applyScenarioDefaults()">
+                                <option value="happy_path">Thành công: COMMITTED</option>
+                                <option value="invalid_destination">Lỗi tài khoản Family: ROLLBACK</option>
+                                <option value="insufficient_source_balance">Serene không đủ tiền: ROLLBACK</option>
+                                <option value="source_prepare_crash">Serene crash trước vote: lỗi Phase 1</option>
+                                <option value="source_commit_ack_lost">Serene mất ACK sau COMMIT: IN_DOUBT</option>
+                                <option value="source_commit_fail_before_apply">Serene lỗi trước COMMIT: IN_DOUBT
+                                </option>
+                                <option value="source_rollback_ack_lost">Rollback nhưng mất ACK: IN_DOUBT</option>
+                                <option value="coordinator_crash">Delay 15s (Test Coordinator Crash)</option>
+                            </select>
+                        </div>
+                        <div class="field wide">
+                            <label class="field-label" for="note">Nội dung</label>
+                            <input type="text" id="note" value="Serene web 2PC demo" autocomplete="off">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="submitTransfer">Gửi qua Java
+                                Coordinator</button>
+                            <button type="button" class="btn btn-ghost" onclick="resetFormDefaults()">Reset
+                                form</button>
+                        </div>
+                    </form>
+
+                    <aside class="scenario-help" id="scenarioHelp">
+                        Chọn kịch bản rồi bấm gửi. Mã client transaction và coordinator transaction được tự sinh trong
+                        nền.
+                    </aside>
+                </div>
+            </div>
+        </section>
+
+        <section class="card result-card">
+            <div class="card-header">
+                <span class="card-title">Kết quả từ Java Coordinator</span>
+                <div class="filter-row">
+                    <button class="btn btn-ghost btn-sm" onclick="refreshCoordinatorStatus()" id="refreshStatusBtn"
+                        disabled>Cập nhật trạng thái</button>
+                    <button class="btn btn-ghost btn-sm" onclick="retryDecision()" id="retryDecisionBtn" disabled>Retry
+                        decision</button>
+                    <button class="btn btn-ghost btn-sm" onclick="toggleRawJson()">Ẩn/hiện JSON</button>
+                </div>
+            </div>
+            <div id="resultPanel" class="result-panel">
+                <div class="table-empty">Chưa có giao dịch. Hãy gửi một lệnh chuyển tiền ở form phía trên.</div>
+            </div>
+            <pre id="rawJson" class="recovery-result" style="display:none;"></pre>
+        </section>
+
+        <div class="bottom-row">
+            <section class="card">
+                <div class="card-header">
+                    <span class="card-title">Timeline demo</span>
+                    <button class="btn btn-ghost btn-sm" onclick="clearFlow()">Xóa</button>
+                </div>
+                <div class="timeline" id="flowContainer">
+                    <div class="timeline-empty">Các bước gửi qua coordinator sẽ hiện ở đây.</div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header">
+                    <span class="card-title">Số dư tài khoản Serene</span>
+                    <button class="btn btn-ghost btn-sm" onclick="loadAccounts()">Làm mới</button>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tài khoản</th>
+                                <th>Tên</th>
+                                <th>Số dư</th>
+                                <th>Khóa</th>
+                            </tr>
+                        </thead>
+                        <tbody id="accountsBody">
+                            <tr>
+                                <td colspan="4" class="table-empty">Đang tải...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
         <section class="card">
             <div class="card-header">
-                <span class="card-title">Timeline demo</span>
-                <button class="btn btn-ghost btn-sm" onclick="clearFlow()">Xóa</button>
+                <span class="card-title">Cấu hình lỗi khi nhận (Receiver Simulation)</span>
+                <button class="btn btn-primary btn-sm" onclick="saveReceiverSimulation()">Lưu cấu hình</button>
             </div>
-            <div class="timeline" id="flowContainer">
-                <div class="timeline-empty">Các bước gửi qua coordinator sẽ hiện ở đây.</div>
+            <div class="card-body">
+                <form id="receiverSimForm" class="transfer-form">
+                    <div class="field wide">
+                        <label class="field-label" for="receiverScenario">Kịch bản khi Family gửi tiền đến</label>
+                        <select id="receiverScenario">
+                            <option value="happy_path">Bình thường (Thành công)</option>
+                            <option value="prepare_crash">Crash trước khi Vote (Lỗi Phase 1)</option>
+                            <option value="commit_fail">Lỗi trước khi Apply Commit (IN_DOUBT)</option>
+                            <option value="commit_crash">Mất ACK sau khi Commit (IN_DOUBT)</option>
+                            <option value="rollback_crash">Mất ACK sau khi Rollback (IN_DOUBT)</option>
+                            <option value="coordinator_crash">Delay 15s (Test Coordinator Crash)</option>
+                        </select>
+                    </div>
+                </form>
+                <aside class="scenario-help">Cấu hình này sẽ áp dụng cho lần tiếp theo Family Mobile chuyển tiền sang
+                    Serene (chiều CREDIT).</aside>
             </div>
         </section>
 
         <section class="card">
             <div class="card-header">
-                <span class="card-title">Số dư tài khoản Serene</span>
-                <button class="btn btn-ghost btn-sm" onclick="loadAccounts()">Làm mới</button>
+                <span class="card-title">Lịch sử participant Serene</span>
+                <div class="filter-row">
+                    <select id="statusFilter" onchange="loadTransactions()">
+                        <option value="">Tất cả trạng thái</option>
+                        <option value="INIT">INIT</option>
+                        <option value="PREPARED">PREPARED</option>
+                        <option value="COMMITTED">COMMITTED</option>
+                        <option value="ABORTED">ABORTED</option>
+                    </select>
+                    <button class="btn btn-ghost btn-sm" onclick="loadTransactions()">Làm mới</button>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
                     <thead>
-                    <tr>
-                        <th>Tài khoản</th>
-                        <th>Tên</th>
-                        <th>Số dư</th>
-                        <th>Khóa</th>
-                    </tr>
+                        <tr>
+                            <th>Tài khoản</th>
+                            <th>Thao tác</th>
+                            <th>Số tiền</th>
+                            <th>Trạng thái</th>
+                            <th>Thời gian</th>
+                            <th>Hành động</th>
+                        </tr>
                     </thead>
-                    <tbody id="accountsBody">
-                    <tr><td colspan="4" class="table-empty">Đang tải...</td></tr>
+                    <tbody id="transactionsBody">
+                        <tr>
+                            <td colspan="6" class="table-empty">Đang tải...</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </section>
-    </div>
+    </main>
 
-    <section class="card">
-        <div class="card-header">
-            <span class="card-title">Lịch sử participant Serene</span>
-            <div class="filter-row">
-                <select id="statusFilter" onchange="loadTransactions()">
-                    <option value="">Tất cả trạng thái</option>
-                    <option value="INIT">INIT</option>
-                    <option value="PREPARED">PREPARED</option>
-                    <option value="COMMITTED">COMMITTED</option>
-                    <option value="ABORTED">ABORTED</option>
-                </select>
-                <button class="btn btn-ghost btn-sm" onclick="loadTransactions()">Làm mới</button>
-            </div>
-        </div>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                <tr>
-                    <th>Tài khoản</th>
-                    <th>Thao tác</th>
-                    <th>Số tiền</th>
-                    <th>Trạng thái</th>
-                    <th>Thời gian</th>
-                </tr>
-                </thead>
-                <tbody id="transactionsBody">
-                <tr><td colspan="5" class="table-empty">Đang tải...</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </section>
-</main>
-
-<div id="toastContainer" class="toast-container"></div>
-<script src="js/main.js"></script>
+    <div id="toastContainer" class="toast-container"></div>
+    <script src="js/main.js"></script>
 </body>
+
 </html>

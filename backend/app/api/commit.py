@@ -9,6 +9,8 @@ from app.core.database import get_db
 from app.schemas.commit_schema import CommitRequest, CommitResponse
 from app.services.transaction_service import TransactionService
 from app.utils.logger import log_error, log_transaction
+from app.models.transaction_model import TransactionLog
+from app.api.simulation import get_current_receiver_simulation
 
 router = APIRouter(prefix="/api", tags=["2PC - Commit"])
 
@@ -28,6 +30,15 @@ def commit(request: CommitRequest, db: Session = Depends(get_db)):
     để giả lập coordinator không nhận được response (Phase 2 crash).
     """
     try:
+        tx = db.query(TransactionLog).filter(TransactionLog.transaction_id == request.transaction_id).first()
+        if tx and tx.operation == "CREDIT":
+            sim = get_current_receiver_simulation()
+            request.simulate_delay_ms = max(request.simulate_delay_ms, sim.simulate_delay_ms)
+            if sim.simulate_commit_fail_before_apply:
+                request.simulate_fail_before_apply = True
+            if sim.simulate_commit_crash:
+                request.simulate_crash = True
+
         if request.simulate_delay_ms > 0:
             log_transaction(
                 request.transaction_id,

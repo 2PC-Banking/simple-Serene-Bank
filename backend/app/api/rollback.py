@@ -9,6 +9,8 @@ from app.core.database import get_db
 from app.schemas.rollback_schema import RollbackRequest, RollbackResponse
 from app.services.transaction_service import TransactionService
 from app.utils.logger import log_error
+from app.models.transaction_model import TransactionLog
+from app.api.simulation import get_current_receiver_simulation
 
 router = APIRouter(prefix="/api", tags=["2PC - Rollback"])
 
@@ -33,6 +35,16 @@ def rollback(request: RollbackRequest, db: Session = Depends(get_db)):
     - simulate_crash_after_apply:  ABORTED written, but ACK is lost (coordinator sees timeout)
     """
     try:
+        tx = db.query(TransactionLog).filter(TransactionLog.transaction_id == request.transaction_id).first()
+        sim = get_current_receiver_simulation()
+
+        # Áp dụng simulation cho cả CREDIT (receiver) lẫn DEBIT (sender)
+        # Trước đây chỉ áp dụng cho CREDIT → bỏ sót kịch bản mất ACK ở bên gửi
+        if tx is not None:
+            request.simulate_delay_ms = max(request.simulate_delay_ms, sim.simulate_delay_ms)
+            if sim.simulate_rollback_crash_after_apply:
+                request.simulate_crash_after_apply = True
+
         if request.simulate_delay_ms > 0:
             time.sleep(request.simulate_delay_ms / 1000)
 

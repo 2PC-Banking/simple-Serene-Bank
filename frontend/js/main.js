@@ -22,6 +22,7 @@ const scenarioText = {
     source_commit_ack_lost: "Serene đã COMMIT nhưng giả lập mất ACK, coordinator sẽ thấy IN_DOUBT.",
     source_commit_fail_before_apply: "Serene lỗi trước khi áp dụng COMMIT, coordinator sẽ thấy IN_DOUBT.",
     source_rollback_ack_lost: "Family vote NO để rollback, Serene rollback nhưng mất ACK nên coordinator có thể IN_DOUBT.",
+    coordinator_crash: "Giả lập Serene delay 15 giây. Hãy tắt Java Coordinator trong lúc hệ thống đang chờ để test lỗi sập Coordinator.",
 };
 
 function escapeHtml(value) {
@@ -186,8 +187,8 @@ function renderResult(payload) {
             <div><span>Phase</span>${statusBadge(payload?.phase)}</div>
             <div><span>Decision</span><strong>${escapeHtml(payload?.decision || "-")}</strong></div>
             <div><span>Số tiền</span><strong>${formatMoney(payload?.amount)}</strong></div>
-            <div><span>Từ Serene</span><strong>${escapeHtml(payload?.fromAccount || "-")}</strong></div>
-            <div><span>Đến Family</span><strong>${escapeHtml(payload?.toAccount || "-")}</strong></div>
+            <div><span>Tài khoản nguồn (DEBIT)</span><strong>${escapeHtml(payload?.fromAccount || "-")}</strong></div>
+            <div><span>Tài khoản nhận (CREDIT)</span><strong>${escapeHtml(payload?.toAccount || "-")}</strong></div>
         </div>
         <div class="table-wrap participant-table">
             <table>
@@ -370,7 +371,7 @@ async function loadTransactions() {
         const rows = result.data || [];
         const tbody = document.getElementById("transactionsBody");
         if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="table-empty">Chưa có transaction.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="table-empty">Chưa có transaction.</td></tr>';
             return;
         }
         tbody.innerHTML = rows.map(tx => `
@@ -380,18 +381,66 @@ async function loadTransactions() {
                 <td class="cell-mono">${formatMoney(tx.amount)}</td>
                 <td>${statusBadge(tx.status)}</td>
                 <td class="cell-mono">${new Date(tx.created_at).toLocaleString("vi-VN")}</td>
+                <td>
+                    ${tx.operation === 'CREDIT' ? `<button class="btn btn-ghost btn-sm" onclick="fetchPassiveCoordinatorStatus('${tx.transaction_id}')">Xem Coordinator</button>` : '-'}
+                </td>
             </tr>
         `).join("");
     } catch (err) {
         document.getElementById("transactionsBody").innerHTML =
-            `<tr><td colspan="5" class="table-empty" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
+            `<tr><td colspan="6" class="table-empty" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
     }
 }
 
 async function refreshAll(includeHealth = true) {
-    const tasks = [loadAccounts(), loadTransactions()];
+    const tasks = [loadAccounts(), loadTransactions(), loadReceiverSimulation()];
     if (includeHealth) tasks.push(checkHealth());
     await Promise.allSettled(tasks);
+}
+
+async function loadReceiverSimulation() {
+    try {
+        const config = await apiCall(`${API_BASE}/simulation/receiver`);
+        let scenario = 'happy_path';
+        if (config.simulate_prepare_crash_before_vote) scenario = 'prepare_crash';
+        else if (config.simulate_commit_fail_before_apply) scenario = 'commit_fail';
+        else if (config.simulate_commit_crash) scenario = 'commit_crash';
+        else if (config.simulate_rollback_crash_after_apply) scenario = 'rollback_crash';
+        else if (config.simulate_delay_ms === 15000) scenario = 'coordinator_crash';
+        document.getElementById('receiverScenario').value = scenario;
+    } catch (err) {
+        console.error("Failed to load receiver simulation config:", err);
+    }
+}
+
+async function saveReceiverSimulation() {
+    const scenario = document.getElementById('receiverScenario').value;
+    const config = {
+        simulate_prepare_crash_before_vote: scenario === 'prepare_crash',
+        simulate_commit_fail_before_apply: scenario === 'commit_fail',
+        simulate_commit_crash: scenario === 'commit_crash',
+        simulate_rollback_crash_after_apply: scenario === 'rollback_crash',
+        simulate_delay_ms: scenario === 'coordinator_crash' ? 15000 : 0
+    };
+    try {
+        await apiCall(`${API_BASE}/simulation/receiver`, "POST", config);
+        showToast("Đã lưu cấu hình giả lập nhận tiền", "success");
+    } catch (err) {
+        showToast("Lỗi khi lưu cấu hình: " + err.message, "error");
+    }
+}
+
+async function fetchPassiveCoordinatorStatus(transactionId) {
+    try {
+        addFlowStep("prepare", "Kiểm tra Coordinator", "Đang fetch trạng thái từ Java Coordinator...");
+        currentTransactionId = transactionId;
+        const response = await apiCall(`${API_BASE}/interbank/transfer-2pc/${transactionId}`);
+        renderResult(response);
+        addFlowStep("decision", "Cập nhật trạng thái coordinator", `${response.status || "UNKNOWN"} / ${response.phase || "-"}`);
+        document.getElementById("resultPanel").scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+        showToast("Không thể fetch Coordinator: " + err.message, "error");
+    }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
